@@ -23,7 +23,7 @@ export async function getOpenAIChatCompletion(prompt) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-1.5-flash"; // 默认使用 gemini-pro
 const geminiModel = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
-const fixedRoleInstruction = "你是一个AI助手，根据用户的提问按你自己的理解回答问题，且需要使用与用户相同的语言。";
+const fixedRoleInstruction = "你是一个AI，旨在回答和解决人们的问题，并且你使用与问题相同的语言回答问题。";
 export async function getGeminiChatCompletion(prompt) {
   try {
     const combinedPrompt = `${fixedRoleInstruction}\n\n用户消息：${prompt}`;
