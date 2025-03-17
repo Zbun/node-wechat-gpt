@@ -21,12 +21,13 @@ export async function getOpenAIChatCompletion(prompt) {
 
 // Gemini 配置 (使用 @google/generative-ai)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini"; // 默认使用 gemini-pro
-const geminiModel = genAI.getGenerativeModel({ model: geminiModelName });
+const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-1.5-flash"; // 默认使用 gemini-pro
+const geminiModel = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 
 export async function getGeminiChatCompletion(prompt) {
   try {
     const result = await geminiModel.generateContent(prompt);
+    debugger
     const response = await result.response;
     const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
     return text || "抱歉，Gemini 没有给出回复。";
