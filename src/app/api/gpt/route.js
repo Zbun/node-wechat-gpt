@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你要用与提问相同的语言回答。";
 // OpenAI 配置
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: process.env.OPENAI_API_BASE_URL });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com" });
 
 export async function getOpenAIChatCompletion(prompt) {
   try {
