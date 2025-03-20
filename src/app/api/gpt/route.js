@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 const { GoogleGenerativeAI } = require("@google/generative-ai"); // 引入新的库
 import { NextResponse } from 'next/server';
 
-const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你要用与提问相同的语言回答。";
+const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用与提问相同的语言回答。";
 const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "2"); // 添加历史记录条数配置
 
 // 用于存储对话历史的 Map
