@@ -90,13 +90,14 @@ export async function POST(request) {
       case 'event': {
         const eventType = message.Event;
         if (eventType === 'subscribe') {
+          const welcomeMessage = process.env.WELCOME_MESSAGE || "感谢您的关注！我是您的 AI 助手，可以为您解答任何问题。";
           const responseXml = `
                       <xml>
                           <ToUserName><![CDATA[${fromUser}]]></ToUserName>
                           <FromUserName><![CDATA[${toUser}]]></FromUserName>
                           <CreateTime>${createTime}</CreateTime>
                           <MsgType><![CDATA[text]]></MsgType>
-                          <Content><![CDATA[感谢您的关注！有什么我可以帮您解答的吗？]]></Content>
+                          <Content><![CDATA[${welcomeMessage}]]></Content>
                       </xml>
                   `;
           return new NextResponse(responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
