@@ -1,11 +1,11 @@
 // src/app/api/wechat/route.js
+import { NextResponse } from 'next/server';
+import { parseString } from 'xml2js';  // 缺少这个导入
+import crypto from 'crypto';  // 缺少加密模块导入
 import {
   getOpenAIChatCompletion,
   getGeminiChatCompletion,
 } from '../../../../src/app/api/gpt/route'; // 调整导入路径
-import { parseString } from 'xml2js';
-import crypto from 'crypto';
-import { NextResponse } from 'next/server';
 
 // 微信公众号配置 (从环境变量中获取)
 const wechatToken = process.env.WECHAT_TOKEN;
@@ -61,19 +61,25 @@ export async function POST(request) {
         try {
           switch (gptModelPreference.toLowerCase()) {
             case 'openai':
-              gptResponse = await getOpenAIChatCompletion(userMessage);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser);
               break;
             case 'gemini':
-              gptResponse = await getGeminiChatCompletion(userMessage);
+              gptResponse = await getGeminiChatCompletion(userMessage, fromUser);
               break;
             default:
               console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-              gptResponse = await getOpenAIChatCompletion(userMessage);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser);
               break;
           }
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
           gptResponse = `抱歉，${gptModelPreference.toUpperCase()} 服务暂时不可用。`;
+        }
+
+        // 微信文本消息有长度限制，截断过长的回复
+        const MAX_MSG_LENGTH = 2000;
+        if (gptResponse.length > MAX_MSG_LENGTH) {
+          gptResponse = gptResponse.substring(0, MAX_MSG_LENGTH - 3) + '...';
         }
 
         const responseXml = `

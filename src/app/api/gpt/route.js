@@ -1,6 +1,6 @@
 // src/app/api/gpt/route.js
 import OpenAI from 'openai';
-const { GoogleGenerativeAI } = require("@google/generative-ai"); // 引入新的库
+import { GoogleGenerativeAI } from "@google/generative-ai";  // 使用import替代require
 import { NextResponse } from 'next/server';
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
@@ -12,12 +12,20 @@ const conversationHistory = new Map();
 // 清理超过1小时的历史记录
 function cleanupOldHistory() {
   const oneHourAgo = Date.now() - 3600000;
+  let cleanCount = 0;
   for (const [key, value] of conversationHistory.entries()) {
     if (value.lastUpdate < oneHourAgo) {
       conversationHistory.delete(key);
+      cleanCount++;
     }
   }
+  if (cleanCount > 0) {
+    console.log(`已清理 ${cleanCount} 条过期对话历史`);
+  }
 }
+
+// 定期清理历史记录，避免内存泄漏
+setInterval(cleanupOldHistory, 3600000); // 每小时清理一次
 
 // OpenAI 配置
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com" });
@@ -60,6 +68,12 @@ export async function getOpenAIChatCompletion(prompt, userId) {
     ];
     userHistory.lastUpdate = Date.now();
 
+    // 限制历史记录大小
+    const MAX_HISTORY_SIZE = 50;
+    if (userHistory.messages.length > MAX_HISTORY_SIZE) {
+      userHistory.messages = userHistory.messages.slice(-MAX_HISTORY_SIZE);
+    }
+
     return assistantMessage;
   } catch (error) {
     console.error("OpenAI API Error:", error);
@@ -72,7 +86,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite"; // 默认使用 gemini-2.0-flash-lite
 const geminiModel = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 
-export async function getGeminiChatCompletion(prompt, userId) {
+export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
   try {
     cleanupOldHistory();
 
@@ -104,9 +118,10 @@ export async function getGeminiChatCompletion(prompt, userId) {
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
 
-    // 如果回复以"AI："开头，移除这个前缀
-    if (text.startsWith('AI：')) {
-      text = text.substring(3);
+    // 改进前缀检测
+    // 如果回复以"AI："或类似前缀开头，移除这个前缀
+    if (text.match(/^(AI[:：]|Assistant[:：]|机器人[:：])/i)) {
+      text = text.replace(/^(AI[:：]|Assistant[:：]|机器人[:：])\s*/i, '');
     }
 
     // 更新对话历史
@@ -117,9 +132,20 @@ export async function getGeminiChatCompletion(prompt, userId) {
     ];
     userHistory.lastUpdate = Date.now();
 
+    // 限制历史记录大小
+    const MAX_HISTORY_SIZE = 50;
+    if (userHistory.messages.length > MAX_HISTORY_SIZE) {
+      userHistory.messages = userHistory.messages.slice(-MAX_HISTORY_SIZE);
+    }
+
     return text;
   } catch (error) {
     console.error("Gemini API Error:", error);
-    throw error;
+    // 添加重试逻辑
+    if (error.toString().includes('rate limit') && retryCount < MAX_RETRIES) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return getGeminiChatCompletion(prompt, userId, retryCount + 1);
+    }
+    throw error;  // 确保抛出错误
   }
 }
