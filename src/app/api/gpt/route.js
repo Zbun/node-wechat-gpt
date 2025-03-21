@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 const { GoogleGenerativeAI } = require("@google/generative-ai"); // 引入新的库
 import { NextResponse } from 'next/server';
 
-const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，直接用相同的语言回答问题，不需要注明你的身份。";
+const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
 const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "2"); // 添加历史记录条数配置
 
 // 用于存储对话历史的 Map
@@ -87,20 +87,27 @@ export async function getGeminiChatCompletion(prompt, userId) {
     const userHistory = conversationHistory.get(userId + '_gemini');
     let contextString = fixedRoleInstruction + "\n\n";
 
-    // 添加历史对话（增加安全检查）
+    // 修改历史对话格式，移除角色标签
     if (Array.isArray(userHistory.messages)) {
       for (const msg of userHistory.messages.slice(-MAX_HISTORY * 2)) {
         if (msg && typeof msg.role === 'string' && typeof msg.content === 'string') {
-          contextString += `${msg.role === 'user' ? '用户' : 'AI'}：${msg.content}\n`;
+          // 直接添加内容，不添加角色标签
+          contextString += `${msg.content}\n`;
         }
       }
     }
 
-    contextString += `用户：${prompt}`;
+    // 直接添加用户问题，不添加"用户："前缀
+    contextString += prompt;
 
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
-    const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
+    let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
+
+    // 如果回复以"AI："开头，移除这个前缀
+    if (text.startsWith('AI：')) {
+      text = text.substring(3);
+    }
 
     // 更新对话历史
     userHistory.messages = [
