@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";  // 使用import替�
 import { NextResponse } from 'next/server';
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
-const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "2"); // 添加历史记录条数配置
+const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 默认保存4条历史记录
 
 // 用于存储对话历史的 Map
 const conversationHistory = new Map();
