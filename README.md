@@ -45,6 +45,12 @@ GPT_MODEL=openai  # 可选，选择默认AI服务提供商: openai 或 gemini
 GPT_PRE_PROMPT=你是一个小助手，用相同的语言回答问题。  # 可选，AI角色设定
 MAX_HISTORY=4  # 可选，保存的对话历史轮数
 WELCOME_MESSAGE=感谢关注！我是您的AI助手，可以为您解答任何问题。  # 可选，新用户关注欢迎语
+
+# 飞书机器人配置
+FEISHU_APP_ID=your_feishu_app_id
+FEISHU_APP_SECRET=your_feishu_app_secret
+FEISHU_VERIFICATION_TOKEN=your_feishu_verification_token
+FEISHU_ENCRYPT_KEY=your_feishu_encrypt_key
 ```
 
 4. 启动开发服务器：
@@ -65,6 +71,10 @@ npm run dev
 | MAX_HISTORY | 保存的对话历史轮数 | 4 | 任意正整数 |
 | GPT_PRE_PROMPT | AI角色设定 | 你是一个小助手，用相同的语言回答问题。 | 任意文本 |
 | WELCOME_MESSAGE | 新用户关注欢迎语 | 感谢您的关注！我是您的AI助手... | 任意文本 |
+| FEISHU_APP_ID | 飞书应用ID | 必填 | - |
+| FEISHU_APP_SECRET | 飞书应用密钥 | 必填 | - |
+| FEISHU_VERIFICATION_TOKEN | 飞书验证令牌 | 必填 | - |
+| FEISHU_ENCRYPT_KEY | 飞书加密密钥 | 可选 | - |
 
 ### GPT_MODEL 详细说明
 
@@ -81,6 +91,24 @@ npm run dev
    - URL: `https://你的域名/api/wechat`
    - Token: 与环境变量中的WECHAT_TOKEN一致
    - 消息加解密方式: 明文模式
+
+## 飞书机器人配置
+
+除了微信公众号外，本项目还支持接入飞书机器人。
+
+### 飞书应用配置
+
+1. 登录[飞书开发者平台](https://open.feishu.cn/app)
+2. 创建一个自建应用
+3. 在"应用功能"中启用"机器人"功能
+4. 在"事件订阅"中添加请求地址：`https://你的域名/api/feishu`
+5. 订阅以下事件：
+   - `im:message.receive_v1` (接收消息)
+6. 获取并配置以下环境变量：
+   - `FEISHU_APP_ID`: 应用凭证中的App ID
+   - `FEISHU_APP_SECRET`: 应用凭证中的App Secret
+   - `FEISHU_VERIFICATION_TOKEN`: 事件订阅中的Verification Token
+   - `FEISHU_ENCRYPT_KEY`: 事件订阅中的Encrypt Key (如启用了加密)
 
 ## 部署
 
