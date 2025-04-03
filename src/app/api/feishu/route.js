@@ -14,6 +14,10 @@ const gptModelPreference = process.env.GPT_MODEL || 'openai';
 let accessToken = null;
 let tokenExpireTime = 0;
 
+// 添加消息ID缓存，用于去重
+const processedMessageIds = new Map();
+const MESSAGE_CACHE_TTL = 60 * 1000; // 1分钟缓存时间
+
 // 获取飞书访问令牌
 async function getAccessToken() {
   // 如果当前令牌有效，直接返回
@@ -34,6 +38,7 @@ async function getAccessToken() {
     });
 
     const data = await response.json();
+
     if (data.code !== 0) {
       throw new Error(`Failed to get access token: ${data.msg}`);
     }
@@ -43,41 +48,68 @@ async function getAccessToken() {
     tokenExpireTime = Date.now() + (data.expire - 300) * 1000;
     return accessToken;
   } catch (error) {
-    console.error('获取飞书访问令牌失败:', error);
     throw error;
   }
 }
 
-// 发送消息到飞书
-async function sendMessageToFeishu(chatId, text) {
+// 发送消息到飞书（支持群消息和个人消息）
+async function sendMessageToFeishu(message) {
   try {
     const token = await getAccessToken();
-    const response = await fetch('https://open.feishu.cn/open-apis/im/v1/messages', {
+    const { chatId, userId, text, chatType } = message;
+
+    // 确定接收ID类型和实际ID
+    let receiveIdType, receiveId;
+
+    if (chatType === 'group') {
+      // 群聊消息
+      receiveIdType = 'chat_id';
+      receiveId = chatId;
+    } else {
+      // 私聊消息
+      receiveIdType = 'user_id';
+      receiveId = userId;
+    }
+
+    const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
-        receive_id: chatId,
+        receive_id: receiveId,
         msg_type: 'text',
-        content: JSON.stringify({ text }),
+        content: JSON.stringify({ text })
       }),
     });
-    return await response.json();
+
+    const result = await response.json();
+    if (result.code !== 0) {
+      throw new Error(`发送消息失败: ${result.msg}`);
+    }
+
+    return result;
   } catch (error) {
-    console.error('发送飞书消息失败:', error);
     throw error;
   }
 }
 
-// 验证飞书请求签名
-function verifyFeishuSignature(timestamp, nonce, body, signature) {
-  if (!FEISHU_ENCRYPT_KEY) return true; // 如果未配置加密密钥，则跳过验证
+// 验证飞书请求签名 (最新规则)
+function verifyFeishuSignature(timestamp, signature) {
+  if (!FEISHU_APP_SECRET) return true; // 如果未配置应用密钥，则跳过验证
 
-  const stringToSign = timestamp + nonce + FEISHU_ENCRYPT_KEY + body;
-  const sign = crypto.createHash('sha256').update(stringToSign).digest('hex');
-  return sign === signature;
+  try {
+    // 使用 APP_SECRET 作为签名密钥
+    const stringToSign = timestamp + "\n" + FEISHU_APP_SECRET;
+
+    // 使用 HmacSHA256 对空字符串计算签名，然后进行 Base64 编码
+    const sign = crypto.createHmac('sha256', stringToSign).update('').digest('base64');
+
+    return sign === signature;
+  } catch (error) {
+    return false;
+  }
 }
 
 // 验证事件回调的 token
@@ -85,14 +117,38 @@ function verifyToken(token) {
   return token === FEISHU_VERIFICATION_TOKEN;
 }
 
-// 处理飞书消息事件
+// 处理飞书消息事件，添加去重机制
 async function handleMessage(event) {
   const { message, sender } = event;
+  const messageId = message.message_id;
+
+  // 检查消息是否已处理过
+  if (processedMessageIds.has(messageId)) {
+    return null; // 返回null表示不需要回复
+  }
+
+  // 记录已处理的消息ID
+  processedMessageIds.set(messageId, Date.now());
+
+  // 定期清理过期的消息ID
+  const now = Date.now();
+  for (const [id, timestamp] of processedMessageIds.entries()) {
+    if (now - timestamp > MESSAGE_CACHE_TTL) {
+      processedMessageIds.delete(id);
+    }
+  }
+
   const userId = sender.sender_id.user_id || sender.sender_id.open_id;
   const chatId = message.chat_id;
+  const chatType = message.chat_type; // 'p2p' 表示私聊, 'group' 表示群聊
 
   if (message.message_type !== 'text') {
-    return { text: "目前只支持文本消息" };
+    return {
+      text: "目前只支持文本消息",
+      chatId,
+      userId,
+      chatType: chatType === 'group' ? 'group' : 'p2p'
+    };
   }
 
   const content = JSON.parse(message.content);
@@ -101,20 +157,23 @@ async function handleMessage(event) {
   // 调用AI接口生成回复
   let aiResponse;
   try {
+    // 使用聊天ID和用户ID组合作为唯一标识，确保群聊中每个用户有独立的对话历史
+    const contextId = chatType === 'group'
+      ? `feishu_group_${chatId}_${userId}`
+      : `feishu_${userId}`;
+
     switch (gptModelPreference.toLowerCase()) {
       case 'openai':
-        aiResponse = await getOpenAIChatCompletion(userMessage, `feishu_${userId}`);
+        aiResponse = await getOpenAIChatCompletion(userMessage, contextId);
         break;
       case 'gemini':
-        aiResponse = await getGeminiChatCompletion(userMessage, `feishu_${userId}`);
+        aiResponse = await getGeminiChatCompletion(userMessage, contextId);
         break;
       default:
-        console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-        aiResponse = await getOpenAIChatCompletion(userMessage, `feishu_${userId}`);
+        aiResponse = await getOpenAIChatCompletion(userMessage, contextId);
         break;
     }
   } catch (error) {
-    console.error(`Error calling ${gptModelPreference} API:`, error);
     aiResponse = `抱歉，${gptModelPreference.toUpperCase()} 服务暂时不可用。`;
   }
 
@@ -124,30 +183,56 @@ async function handleMessage(event) {
     aiResponse = aiResponse.substring(0, MAX_MSG_LENGTH - 3) + '...';
   }
 
-  return { text: aiResponse, chatId };
+  return {
+    text: aiResponse,
+    chatId,
+    userId,
+    chatType: chatType === 'group' ? 'group' : 'p2p'
+  };
 }
 
 export async function POST(request) {
   try {
     const body = await request.text();
+    console.log('收到飞书请求:', body);
     const jsonBody = JSON.parse(body);
 
     // 获取请求头信息
     const timestamp = request.headers.get('x-lark-request-timestamp');
-    const nonce = request.headers.get('x-lark-request-nonce');
     const signature = request.headers.get('x-lark-signature');
-    const token = jsonBody.token;
 
-    // 验证请求签名
-    if (signature && !verifyFeishuSignature(timestamp, nonce, body, signature)) {
-      return new NextResponse(JSON.stringify({ error: 'Invalid signature' }), {
-        status: 401,
+    // 对于 Challenge 请求，跳过签名验证
+    const { challenge } = jsonBody;
+    if (challenge) {
+      console.log('收到飞书 Challenge 请求，跳过签名验证');
+      return new NextResponse(JSON.stringify({ challenge }), {
+        status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // 验证 Verification Token
-    if (token && !verifyToken(token)) {
+    // 其他请求进行签名验证
+    if (signature && FEISHU_ENCRYPT_KEY) {
+      const isValid = verifyFeishuSignature(timestamp, signature);
+      if (!isValid) {
+        console.error('签名验证失败');
+        console.log({
+          timestamp,
+          signature
+        });
+
+        // 开发阶段可以临时注释下面的返回，强制继续处理
+        return new NextResponse(JSON.stringify({ error: 'Invalid signature' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 验证 Verification Token - 更宽松的逻辑
+    const token = jsonBody.token;
+    if (token && FEISHU_VERIFICATION_TOKEN && !verifyToken(token)) {
+      console.error('Token验证失败');
       return new NextResponse(JSON.stringify({ error: 'Invalid token' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
@@ -155,23 +240,22 @@ export async function POST(request) {
     }
 
     // 处理飞书事件回调
-    const { challenge, type, event } = jsonBody;
-
-    // URL验证请求
-    if (challenge) {
-      return new NextResponse(JSON.stringify({ challenge }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
+    const { event } = jsonBody;
     // 事件处理
-    if (type === 'im.message.receive_v1') {
+    if (jsonBody.header?.event_type === 'im.message.receive_v1') {
       const response = await handleMessage(event);
+
+      // 如果返回null，表示消息已处理过，不需要回复
+      if (!response) {
+        return new NextResponse(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
 
       // 回复消息
       if (response.chatId) {
-        await sendMessageToFeishu(response.chatId, response.text);
+        await sendMessageToFeishu(response);
       }
 
       return new NextResponse(JSON.stringify({ ok: true }), {
