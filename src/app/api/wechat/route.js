@@ -76,7 +76,7 @@ export async function POST(request) {
   try {
     // 延迟加载依赖
     await loadDependencies();
-    
+
     // 使用 fast-xml-parser 解析 XML
     const parser = new XMLParser();
     const result = parser.parse(xml);
