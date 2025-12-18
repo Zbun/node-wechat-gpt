@@ -36,13 +36,13 @@ export async function GET(request) {
 
   // 如果没有参数，返回健康检查响应
   if (!signature && !timestamp && !nonce && !echostr) {
-    return new Response(JSON.stringify({ 
-      status: 'ok', 
+    return new Response(JSON.stringify({
+      status: 'ok',
       message: 'WeChat API endpoint is running',
       runtime: 'edge'
-    }), { 
-      status: 200, 
-      headers: { 'Content-Type': 'application/json' } 
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
     });
   }
 
