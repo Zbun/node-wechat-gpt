@@ -34,6 +34,19 @@ export async function GET(request) {
   const nonce = searchParams.get('nonce');
   const echostr = searchParams.get('echostr');
 
+  // 如果没有参数，返回健康检查响应
+  if (!signature && !timestamp && !nonce && !echostr) {
+    return new Response(JSON.stringify({ 
+      status: 'ok', 
+      message: 'WeChat API endpoint is running',
+      runtime: 'edge'
+    }), { 
+      status: 200, 
+      headers: { 'Content-Type': 'application/json' } 
+    });
+  }
+
+  // 微信验证需要所有参数
   if (!signature || !timestamp || !nonce || !echostr) {
     return new Response('Invalid parameters', { status: 400 });
   }
