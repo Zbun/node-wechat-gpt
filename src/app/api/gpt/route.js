@@ -1,15 +1,21 @@
 // src/app/api/gpt/route.js
 import OpenAI from 'openai';
-import { GoogleGenerativeAI } from "@google/generative-ai";  // 使用import替代require
-import { NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// 启用 Edge Runtime（Cloudflare Pages 兼容）
+export const runtime = 'edge';
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
 const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 默认保存4条历史记录
+const MAX_RETRIES = 3;
 
 // 用于存储对话历史的 Map
+// 注意：在 Edge Runtime 中，每个请求可能在不同的 worker 中处理，
+// 因此内存存储的历史记录不会跨请求持久化。
+// 如需持久化存储，建议使用 Cloudflare KV 或 D1。
 const conversationHistory = new Map();
 
-// 清理超过1小时的历史记录
+// 清理超过1小时的历史记录（在每次请求时调用）
 function cleanupOldHistory() {
   const oneHourAgo = Date.now() - 3600000;
   let cleanCount = 0;
@@ -24,11 +30,13 @@ function cleanupOldHistory() {
   }
 }
 
-// 定期清理历史记录，避免内存泄漏
-setInterval(cleanupOldHistory, 3600000); // 每小时清理一次
-
 // OpenAI 配置
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com" });
+const getOpenAIClient = () => {
+  return new OpenAI({ 
+    apiKey: process.env.OPENAI_API_KEY, 
+    baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1"
+  });
+};
 
 export async function getOpenAIChatCompletion(prompt, userId) {
   try {
@@ -54,6 +62,7 @@ export async function getOpenAIChatCompletion(prompt, userId) {
       messages.splice(1, 2);
     }
 
+    const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
       messages: messages,
@@ -82,9 +91,11 @@ export async function getOpenAIChatCompletion(prompt, userId) {
 }
 
 // Gemini 配置 (使用 @google/generative-ai)
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite"; // 默认使用 gemini-2.0-flash-lite
-const geminiModel = genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
+const getGeminiModel = () => {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+  return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
+};
 
 export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
   try {
@@ -114,6 +125,7 @@ export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
     // 直接添加用户问题，不添加"用户："前缀
     contextString += prompt;
 
+    const geminiModel = getGeminiModel();
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";

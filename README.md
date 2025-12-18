@@ -1,6 +1,6 @@
 # Node WeChat GPT
 
-基于 Next.js 构建的微信公众号 AI 聊天机器人，支持 OpenAI 和 Google Gemini 模型。
+基于 Next.js 构建的微信公众号 AI 聊天机器人，支持 OpenAI 和 Google Gemini 模型。可部署到 Cloudflare Pages 或 Vercel。
 
 ## 功能特点
 
@@ -10,6 +10,8 @@
 - 🎯 自定义 AI 角色设定
 - 👋 新用户关注自动回复
 - 🧹 自动清理过期会话，优化内存使用
+- ☁️ 支持 Cloudflare Pages Edge Runtime 部署
+- 🚀 支持 Vercel 部署
 
 ## 安装
 
@@ -33,7 +35,7 @@ WECHAT_APP_SECRET=your_app_secret
 
 # OpenAI 配置
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_API_BASE_URL=https://api.openai.com  # 可选，自定义API地址
+OPENAI_API_BASE_URL=https://api.openai.com/v1  # 可选，自定义API地址（注意要包含 /v1）
 OPENAI_MODEL=gpt-3.5-turbo  # 可选，指定OpenAI模型
 
 # Gemini 配置
@@ -112,6 +114,55 @@ npm run dev
 
 ## 部署
 
+### 使用 Cloudflare Pages 部署（推荐）
+
+本项目已适配 Cloudflare Pages Edge Runtime，可获得更快的响应速度和更低的延迟。
+
+#### 方式一：通过 Cloudflare Dashboard
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 进入 "Workers & Pages"
+3. 点击 "Create application" -> "Pages" -> "Connect to Git"
+4. 选择你的 GitHub 仓库
+5. 配置构建设置：
+   - **Framework preset**: `Next.js (Static HTML Export)` 或留空
+   - **Build command**: `npm run pages:build`
+   - **Build output directory**: `.vercel/output/static`
+6. 在 "Environment variables" 中添加环境变量：
+   - `NODE_VERSION`: `20`（必须设置，确保 Node.js 版本兼容）
+   - 以及其他应用所需的环境变量（WECHAT_TOKEN、OPENAI_API_KEY 等）
+7. 点击 "Save and Deploy"
+8. 部署完成后，进入项目设置 -> "Functions" -> "Compatibility flags"：
+   - 添加 `nodejs_compat` 标志（生产环境和预览环境都需要）
+   - 设置 Compatibility date 为 `2024-07-01` 或更新日期
+
+#### 方式二：通过命令行部署
+
+1. 安装 Wrangler CLI（如果尚未安装）：
+```bash
+npm install -g wrangler
+```
+
+2. 登录 Cloudflare：
+```bash
+wrangler login
+```
+
+3. 构建并部署：
+```bash
+npm run pages:deploy
+```
+
+#### 本地开发（Cloudflare 模式）
+
+```bash
+# 先构建 Next.js
+npm run build
+
+# 使用 Wrangler 本地开发
+npm run pages:dev
+```
+
 ### 使用 Vercel 部署
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyourusername%2Fnode-wechat-gpt)
@@ -125,6 +176,35 @@ npm run dev
 ```bash
 docker build -t node-wechat-gpt .
 docker run -p 3000:3000 --env-file .env.local node-wechat-gpt
+```
+
+## 技术说明
+
+### Edge Runtime 适配
+
+本项目使用 Edge Runtime 以支持 Cloudflare Pages 部署，主要改动包括：
+
+- **加密模块**: 使用 Web Crypto API 替代 Node.js `crypto` 模块
+- **XML 解析**: 使用 `fast-xml-parser` 替代 `xml2js`（后者不兼容 Edge Runtime）
+- **对话历史**: 目前使用内存存储。在 Edge Runtime 中，每个请求可能在不同的 worker 实例中处理，因此对话历史不会跨请求持久化。如需持久化存储，可以：
+  - 使用 Cloudflare KV 存储
+  - 使用 Cloudflare D1 数据库
+  - 使用外部数据库服务
+
+### 文件结构
+
+```
+src/
+├── app/
+│   ├── api/
+│   │   ├── wechat/route.js    # 微信公众号 API
+│   │   ├── gpt/route.js       # AI 模型调用
+│   │   └── feishu/route.js    # 飞书机器人 API
+│   ├── globals.css
+│   ├── layout.js
+│   └── page.js
+├── next.config.mjs            # Next.js 配置
+└── wrangler.toml              # Cloudflare 配置
 ```
 
 ## 故障排除
@@ -142,11 +222,17 @@ docker run -p 3000:3000 --env-file .env.local node-wechat-gpt
 **问题**: 记忆上下文失败
 - 确保MAX_HISTORY值大于0
 - 检查用户ID是否正确传递
+- 注意：在 Cloudflare Pages 上，对话历史存储在内存中，不会跨请求持久化
 
 **问题**: 切换模型后无响应
 - 确保已配置相应模型的API密钥
 - 检查模型名称是否正确
 - 查看服务器日志中的错误信息
+
+**问题**: Cloudflare Pages 部署失败
+- 确保 `compatibility_flags` 包含 `nodejs_compat`
+- 检查是否有不兼容 Edge Runtime 的依赖
+- 查看 Cloudflare Dashboard 中的构建日志
 
 ## 贡献
 

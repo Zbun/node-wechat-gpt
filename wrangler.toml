@@ -1,0 +1,10 @@
+name = "node-wechat-gpt"
+compatibility_date = "2024-07-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+# 如需使用 KV 存储对话历史，可取消注释以下配置
+# [[kv_namespaces]]
+# binding = "CONVERSATION_KV"
+# id = "your-kv-namespace-id"
+

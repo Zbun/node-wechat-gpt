@@ -1,7 +1,8 @@
 // src/app/api/feishu/route.js
-import crypto from 'crypto';
-import { NextResponse } from 'next/server';
 import { getOpenAIChatCompletion, getGeminiChatCompletion } from '../gpt/route';
+
+// 启用 Edge Runtime（Cloudflare Pages 兼容）
+export const runtime = 'edge';
 
 // 飞书应用配置 (从环境变量中获取)
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
@@ -10,7 +11,7 @@ const FEISHU_VERIFICATION_TOKEN = process.env.FEISHU_VERIFICATION_TOKEN;
 const FEISHU_ENCRYPT_KEY = process.env.FEISHU_ENCRYPT_KEY;
 const gptModelPreference = process.env.GPT_MODEL || 'openai';
 
-// 保存访问令牌
+// 保存访问令牌（注意：在 Edge Runtime 中，每个请求可能在不同的 worker 中处理）
 let accessToken = null;
 let tokenExpireTime = 0;
 
@@ -95,16 +96,27 @@ async function sendMessageToFeishu(message) {
   }
 }
 
-// 验证飞书请求签名 (最新规则)
-function verifyFeishuSignature(timestamp, signature) {
+// 使用 Web Crypto API 验证飞书请求签名 (最新规则)
+async function verifyFeishuSignature(timestamp, signature) {
   if (!FEISHU_APP_SECRET) return true; // 如果未配置应用密钥，则跳过验证
 
   try {
     // 使用 APP_SECRET 作为签名密钥
     const stringToSign = timestamp + "\n" + FEISHU_APP_SECRET;
 
-    // 使用 HmacSHA256 对空字符串计算签名，然后进行 Base64 编码
-    const sign = crypto.createHmac('sha256', stringToSign).update('').digest('base64');
+    // 使用 Web Crypto API 进行 HMAC-SHA256 签名
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(stringToSign);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    
+    const signatureBuffer = await crypto.subtle.sign('HMAC', key, new Uint8Array(0));
+    const sign = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 
     return sign === signature;
   } catch (error) {
@@ -205,7 +217,7 @@ export async function POST(request) {
     const { challenge } = jsonBody;
     if (challenge) {
       console.log('收到飞书 Challenge 请求，跳过签名验证');
-      return new NextResponse(JSON.stringify({ challenge }), {
+      return new Response(JSON.stringify({ challenge }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -213,7 +225,7 @@ export async function POST(request) {
 
     // 其他请求进行签名验证
     if (signature && FEISHU_ENCRYPT_KEY) {
-      const isValid = verifyFeishuSignature(timestamp, signature);
+      const isValid = await verifyFeishuSignature(timestamp, signature);
       if (!isValid) {
         console.error('签名验证失败');
         console.log({
@@ -222,7 +234,7 @@ export async function POST(request) {
         });
 
         // 开发阶段可以临时注释下面的返回，强制继续处理
-        return new NextResponse(JSON.stringify({ error: 'Invalid signature' }), {
+        return new Response(JSON.stringify({ error: 'Invalid signature' }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' }
         });
@@ -233,7 +245,7 @@ export async function POST(request) {
     const token = jsonBody.token;
     if (token && FEISHU_VERIFICATION_TOKEN && !verifyToken(token)) {
       console.error('Token验证失败');
-      return new NextResponse(JSON.stringify({ error: 'Invalid token' }), {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -247,7 +259,7 @@ export async function POST(request) {
 
       // 如果返回null，表示消息已处理过，不需要回复
       if (!response) {
-        return new NextResponse(JSON.stringify({ ok: true }), {
+        return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         });
@@ -258,20 +270,20 @@ export async function POST(request) {
         await sendMessageToFeishu(response);
       }
 
-      return new NextResponse(JSON.stringify({ ok: true }), {
+      return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
     // 默认响应
-    return new NextResponse(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {
     console.error('Feishu API Error:', error);
-    return new NextResponse(JSON.stringify({ error: 'Internal server error' }), {
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
