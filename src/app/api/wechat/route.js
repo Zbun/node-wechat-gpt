@@ -1,12 +1,24 @@
 // src/app/api/wechat/route.js
-import { XMLParser } from 'fast-xml-parser';
-import {
-  getOpenAIChatCompletion,
-  getGeminiChatCompletion,
-} from '../gpt/route';
 
 // 启用 Edge Runtime（Cloudflare Pages 兼容）
 export const runtime = 'edge';
+
+// 延迟加载依赖，避免模块加载时出错
+let XMLParser;
+let getOpenAIChatCompletion;
+let getGeminiChatCompletion;
+
+async function loadDependencies() {
+  if (!XMLParser) {
+    const fastXmlParser = await import('fast-xml-parser');
+    XMLParser = fastXmlParser.XMLParser;
+  }
+  if (!getOpenAIChatCompletion) {
+    const gptModule = await import('../gpt/route');
+    getOpenAIChatCompletion = gptModule.getOpenAIChatCompletion;
+    getGeminiChatCompletion = gptModule.getGeminiChatCompletion;
+  }
+}
 
 // 微信公众号配置 (从环境变量中获取)
 const wechatToken = process.env.WECHAT_TOKEN;
@@ -62,6 +74,9 @@ export async function POST(request) {
   const xml = await request.text();
 
   try {
+    // 延迟加载依赖
+    await loadDependencies();
+    
     // 使用 fast-xml-parser 解析 XML
     const parser = new XMLParser();
     const result = parser.parse(xml);

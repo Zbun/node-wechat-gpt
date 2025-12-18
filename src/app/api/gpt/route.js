@@ -1,9 +1,27 @@
 // src/app/api/gpt/route.js
-import OpenAI from 'openai';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // 启用 Edge Runtime（Cloudflare Pages 兼容）
 export const runtime = 'edge';
+
+// 延迟加载的模块
+let OpenAI;
+let GoogleGenerativeAI;
+
+async function loadOpenAI() {
+  if (!OpenAI) {
+    const module = await import('openai');
+    OpenAI = module.default;
+  }
+  return OpenAI;
+}
+
+async function loadGoogleAI() {
+  if (!GoogleGenerativeAI) {
+    const module = await import('@google/generative-ai');
+    GoogleGenerativeAI = module.GoogleGenerativeAI;
+  }
+  return GoogleGenerativeAI;
+}
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
 const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 默认保存4条历史记录
@@ -31,8 +49,9 @@ function cleanupOldHistory() {
 }
 
 // OpenAI 配置
-const getOpenAIClient = () => {
-  return new OpenAI({ 
+const getOpenAIClient = async () => {
+  const OpenAIClass = await loadOpenAI();
+  return new OpenAIClass({ 
     apiKey: process.env.OPENAI_API_KEY, 
     baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1"
   });
@@ -62,7 +81,7 @@ export async function getOpenAIChatCompletion(prompt, userId) {
       messages.splice(1, 2);
     }
 
-    const openai = getOpenAIClient();
+    const openai = await getOpenAIClient();
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
       messages: messages,
@@ -91,8 +110,9 @@ export async function getOpenAIChatCompletion(prompt, userId) {
 }
 
 // Gemini 配置 (使用 @google/generative-ai)
-const getGeminiModel = () => {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const getGeminiModel = async () => {
+  const GoogleAIClass = await loadGoogleAI();
+  const genAI = new GoogleAIClass(process.env.GEMINI_API_KEY);
   const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
   return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 };
@@ -125,7 +145,7 @@ export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
     // 直接添加用户问题，不添加"用户："前缀
     contextString += prompt;
 
-    const geminiModel = getGeminiModel();
+    const geminiModel = await getGeminiModel();
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
