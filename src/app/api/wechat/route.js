@@ -6,6 +6,10 @@ let getOpenAIChatCompletion;
 let getGeminiChatCompletion;
 let getCloudflareContext;
 
+// 消息去重缓存（防止微信重试导致重复处理）
+const processedMessages = new Map();
+const MESSAGE_CACHE_TTL = 60000; // 1分钟
+
 async function loadDependencies() {
   if (!XMLParser) {
     const fastXmlParser = await import('fast-xml-parser');
@@ -95,7 +99,25 @@ export async function POST(request) {
     const msgType = message.MsgType;
     const fromUser = message.FromUserName;
     const toUser = message.ToUserName;
+    const msgId = message.MsgId;
     const createTime = Date.now();
+
+    // 消息去重：检查是否已处理过（微信会重试）
+    if (msgId && processedMessages.has(msgId)) {
+      console.log(`重复消息 ${msgId}，跳过处理`);
+      return new Response('', { status: 200 });
+    }
+
+    // 标记消息为已处理
+    if (msgId) {
+      processedMessages.set(msgId, createTime);
+      // 清理过期缓存
+      for (const [id, time] of processedMessages.entries()) {
+        if (createTime - time > MESSAGE_CACHE_TTL) {
+          processedMessages.delete(id);
+        }
+      }
+    }
 
     switch (msgType) {
       case 'text': {

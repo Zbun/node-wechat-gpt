@@ -66,12 +66,13 @@ async function initDatabase(db) {
 async function getHistory(db, userId) {
   if (!db) return [];
   try {
-    await initDatabase(db);
+    // 如果表不存在就返回空数组，不阻塞响应
     const result = await db.prepare(
       'SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
     ).bind(userId, MAX_HISTORY * 2).all();
     return result.results.reverse(); // 按时间正序返回
   } catch (error) {
+    // 表不存在等错误，返回空数组
     console.error('获取历史记录失败:', error);
     return [];
   }
@@ -82,6 +83,10 @@ async function getHistory(db, userId) {
  */
 async function saveMessages(db, userId, userContent, assistantContent) {
   if (!db) return;
+
+  // 确保表存在（只在第一次执行）
+  await initDatabase(db);
+
   const now = Date.now();
   try {
     // 批量插入用户消息和助手回复
@@ -165,11 +170,6 @@ async function callOpenAI(messages) {
 export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) {
   try {
     const db = cfContext?.env?.DB;
-
-    // 调试日志
-    console.log('cfContext:', cfContext ? 'exists' : 'null');
-    console.log('cfContext.env:', cfContext?.env ? 'exists' : 'null');
-    console.log('DB binding:', db ? 'exists' : 'null');
 
     // 获取历史记录
     const history = await getHistory(db, userId);
