@@ -41,24 +41,31 @@
 2. 点击 **Create** > **Import a repository**
 3. 授权并选择你 Fork 的仓库
 4. 配置构建设置：
-   - **Build command**: `npm run deploy`
-   - **Deploy command**: 留空（deploy 命令已包含部署步骤）
+   - **Build command**: `npx opennextjs-cloudflare build`
+   - **Deploy command**: `npx wrangler deploy`
    - **Root directory**: 留空
 
 ### 步骤四：配置环境变量
 
-在 **Environment variables** 中添加以下变量：
+在 **Variables and Secrets** 中添加以下变量：
+
+**构建变量（Build settings > Environment variables）：**
 
 | 变量名 | 说明 | 必填 |
 |--------|------|------|
 | `NODE_VERSION` | Node.js 版本，设置为 `20` | ✅ |
+
+**运行时变量（Settings > Variables and Secrets）：**
+
+| 变量名 | 说明 | 必填 |
+|--------|------|------|
 | `WECHAT_TOKEN` | 微信公众号令牌 | ✅ |
 | `OPENAI_API_KEY` | OpenAI API 密钥 | 使用 OpenAI 时必填 |
 | `OPENAI_MODEL` | OpenAI 模型名称 | 可选，默认 `gpt-3.5-turbo` |
 | `OPENAI_API_BASE_URL` | 自定义 API 地址 | 可选 |
 | `GEMINI_API_KEY` | Google Gemini API 密钥 | 使用 Gemini 时必填 |
 | `GEMINI_MODEL_NAME` | Gemini 模型名称 | 可选，默认 `gemini-2.0-flash-lite` |
-| `GPT_MODEL` | 默认 AI 服务：`openai` 或 `gemini` | 可选，默认 `openai` |
+| `GPT_MODEL` | 默认 AI 服务 | 默认 `openai`，可选 `gemini` |
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
 | `MAX_HISTORY` | 发送给 AI 的历史轮数 | 可选，默认 `4` |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
