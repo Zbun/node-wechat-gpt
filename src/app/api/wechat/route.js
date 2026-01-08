@@ -1,12 +1,10 @@
 // src/app/api/wechat/route.js
 
-// 启用 Edge Runtime（Cloudflare Pages 兼容）
-export const runtime = 'edge';
-
 // 延迟加载依赖，避免模块加载时出错
 let XMLParser;
 let getOpenAIChatCompletion;
 let getGeminiChatCompletion;
+let getCloudflareContext;
 
 async function loadDependencies() {
   if (!XMLParser) {
@@ -17,6 +15,15 @@ async function loadDependencies() {
     const gptModule = await import('../gpt/route');
     getOpenAIChatCompletion = gptModule.getOpenAIChatCompletion;
     getGeminiChatCompletion = gptModule.getGeminiChatCompletion;
+  }
+  if (!getCloudflareContext) {
+    try {
+      const cfModule = await import('@opennextjs/cloudflare');
+      getCloudflareContext = cfModule.getCloudflareContext;
+    } catch {
+      // 非 Cloudflare 环境
+      getCloudflareContext = () => null;
+    }
   }
 }
 
@@ -77,6 +84,9 @@ export async function POST(request) {
     // 延迟加载依赖
     await loadDependencies();
 
+    // 获取 Cloudflare context（包含 D1 绑定和 waitUntil）
+    const cfContext = getCloudflareContext ? await getCloudflareContext() : null;
+
     // 使用 fast-xml-parser 解析 XML
     const parser = new XMLParser();
     const result = parser.parse(xml);
@@ -94,14 +104,14 @@ export async function POST(request) {
         try {
           switch (gptModelPreference.toLowerCase()) {
             case 'openai':
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext);
               break;
             case 'gemini':
-              gptResponse = await getGeminiChatCompletion(userMessage, fromUser);
+              gptResponse = await getGeminiChatCompletion(userMessage, fromUser, cfContext);
               break;
             default:
               console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext);
               break;
           }
         } catch (error) {

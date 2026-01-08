@@ -1,7 +1,5 @@
 // src/app/api/test/route.js
-// 最简化的测试路由，用于验证 Cloudflare Pages Functions 是否正常工作
-
-export const runtime = 'edge';
+// 测试路由，用于验证 Cloudflare Pages Functions 是否正常工作
 
 export async function GET(request) {
   return new Response(JSON.stringify({

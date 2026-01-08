@@ -1,8 +1,5 @@
 // src/app/api/gpt/route.js
 
-// 启用 Edge Runtime（Cloudflare Pages 兼容）
-export const runtime = 'edge';
-
 // 延迟加载的模块
 let OpenAI;
 let GoogleGenerativeAI;
@@ -24,62 +21,133 @@ async function loadGoogleAI() {
 }
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
-const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 默认保存4条历史记录
+const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 发送给 AI 的历史轮数
+const MAX_STORED_MESSAGES = 1000; // 每用户最多存储的消息数
 const MAX_RETRIES = 3;
 
-// 用于存储对话历史的 Map
-// 注意：在 Edge Runtime 中，每个请求可能在不同的 worker 中处理，
-// 因此内存存储的历史记录不会跨请求持久化。
-// 如需持久化存储，建议使用 Cloudflare KV 或 D1。
-const conversationHistory = new Map();
+// D1 数据库操作函数
 
-// 清理超过1小时的历史记录（在每次请求时调用）
-function cleanupOldHistory() {
-  const oneHourAgo = Date.now() - 3600000;
-  let cleanCount = 0;
-  for (const [key, value] of conversationHistory.entries()) {
-    if (value.lastUpdate < oneHourAgo) {
-      conversationHistory.delete(key);
-      cleanCount++;
-    }
+// 标记是否已初始化
+let dbInitialized = false;
+
+/**
+ * 初始化数据库表（首次使用时自动创建）
+ */
+async function initDatabase(db) {
+  if (!db || dbInitialized) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_id ON chat_history(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_created ON chat_history(user_id, created_at);
+    `);
+    dbInitialized = true;
+  } catch (error) {
+    // 表可能已存在，忽略错误
+    dbInitialized = true;
   }
-  if (cleanCount > 0) {
-    console.log(`已清理 ${cleanCount} 条过期对话历史`);
+}
+
+/**
+ * 从 D1 获取用户历史记录（最近 MAX_HISTORY * 2 条）
+ */
+async function getHistory(db, userId) {
+  if (!db) return [];
+  try {
+    await initDatabase(db);
+    const result = await db.prepare(
+      'SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+    ).bind(userId, MAX_HISTORY * 2).all();
+    return result.results.reverse(); // 按时间正序返回
+  } catch (error) {
+    console.error('获取历史记录失败:', error);
+    return [];
+  }
+}
+
+/**
+ * 保存消息到 D1（异步调用，不阻塞响应）
+ */
+async function saveMessages(db, userId, userContent, assistantContent) {
+  if (!db) return;
+  const now = Date.now();
+  try {
+    // 批量插入用户消息和助手回复
+    await db.batch([
+      db.prepare(
+        'INSERT INTO chat_history (user_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+      ).bind(userId, 'user', userContent, now),
+      db.prepare(
+        'INSERT INTO chat_history (user_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+      ).bind(userId, 'assistant', assistantContent, now + 1)
+    ]);
+
+    // 清理超出限制的旧消息
+    await cleanupOldMessages(db, userId);
+  } catch (error) {
+    console.error('保存消息失败:', error);
+  }
+}
+
+/**
+ * 清理超出限制的旧消息，保留最近 MAX_STORED_MESSAGES 条
+ */
+async function cleanupOldMessages(db, userId) {
+  if (!db) return;
+  try {
+    // 获取用户消息总数
+    const countResult = await db.prepare(
+      'SELECT COUNT(*) as count FROM chat_history WHERE user_id = ?'
+    ).bind(userId).first();
+
+    const count = countResult?.count || 0;
+    if (count > MAX_STORED_MESSAGES) {
+      const deleteCount = count - MAX_STORED_MESSAGES;
+      await db.prepare(
+        `DELETE FROM chat_history WHERE user_id = ? AND id IN (
+          SELECT id FROM chat_history WHERE user_id = ? ORDER BY created_at ASC LIMIT ?
+        )`
+      ).bind(userId, userId, deleteCount).run();
+      console.log(`已清理用户 ${userId} 的 ${deleteCount} 条旧消息`);
+    }
+  } catch (error) {
+    console.error('清理旧消息失败:', error);
   }
 }
 
 // OpenAI 配置
 const getOpenAIClient = async () => {
   const OpenAIClass = await loadOpenAI();
-  return new OpenAIClass({ 
-    apiKey: process.env.OPENAI_API_KEY, 
+  return new OpenAIClass({
+    apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1"
   });
 };
 
-export async function getOpenAIChatCompletion(prompt, userId) {
+/**
+ * OpenAI 聊天接口
+ * @param {string} prompt - 用户消息
+ * @param {string} userId - 用户ID
+ * @param {Object} cfContext - Cloudflare context，用于 waitUntil
+ */
+export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) {
   try {
-    cleanupOldHistory();
+    const db = cfContext?.env?.DB;
 
-    // 获取或初始化用户的对话历史
-    if (!conversationHistory.has(userId) || !Array.isArray(conversationHistory.get(userId)?.messages)) {
-      conversationHistory.set(userId, {
-        messages: [],
-        lastUpdate: Date.now()
-      });
-    }
+    // 获取历史记录
+    const history = await getHistory(db, userId);
 
-    const userHistory = conversationHistory.get(userId);
     const messages = [
       { role: "system", content: fixedRoleInstruction },
-      ...(Array.isArray(userHistory.messages) ? userHistory.messages : []),
+      ...history,
       { role: "user", content: prompt }
     ];
-
-    // 保持历史记录在指定条数内
-    while (messages.length > MAX_HISTORY * 2 + 1) {
-      messages.splice(1, 2);
-    }
 
     const openai = await getOpenAIClient();
     const completion = await openai.chat.completions.create({
@@ -89,17 +157,12 @@ export async function getOpenAIChatCompletion(prompt, userId) {
 
     const assistantMessage = completion.choices[0].message.content;
 
-    // 更新对话历史
-    userHistory.messages = [
-      ...messages.slice(1),
-      { role: "assistant", content: assistantMessage }
-    ];
-    userHistory.lastUpdate = Date.now();
-
-    // 限制历史记录大小
-    const MAX_HISTORY_SIZE = 50;
-    if (userHistory.messages.length > MAX_HISTORY_SIZE) {
-      userHistory.messages = userHistory.messages.slice(-MAX_HISTORY_SIZE);
+    // 使用 waitUntil 异步保存消息，不阻塞响应
+    if (cfContext?.ctx?.waitUntil && db) {
+      cfContext.ctx.waitUntil(saveMessages(db, userId, prompt, assistantMessage));
+    } else if (db) {
+      // 降级：同步保存
+      await saveMessages(db, userId, prompt, assistantMessage);
     }
 
     return assistantMessage;
@@ -117,32 +180,29 @@ const getGeminiModel = async () => {
   return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 };
 
-export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
+/**
+ * Gemini 聊天接口
+ * @param {string} prompt - 用户消息
+ * @param {string} userId - 用户ID
+ * @param {Object} cfContext - Cloudflare context，用于 waitUntil
+ * @param {number} retryCount - 重试次数
+ */
+export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0) {
   try {
-    cleanupOldHistory();
+    const db = cfContext?.env?.DB;
 
-    // 获取或初始化用户的对话历史
-    if (!conversationHistory.has(userId + '_gemini') || !Array.isArray(conversationHistory.get(userId + '_gemini')?.messages)) {
-      conversationHistory.set(userId + '_gemini', {
-        messages: [],
-        lastUpdate: Date.now()
-      });
-    }
+    // 获取历史记录
+    const history = await getHistory(db, userId + '_gemini');
 
-    const userHistory = conversationHistory.get(userId + '_gemini');
     let contextString = fixedRoleInstruction + "\n\n";
 
-    // 修改历史对话格式，移除角色标签
-    if (Array.isArray(userHistory.messages)) {
-      for (const msg of userHistory.messages.slice(-MAX_HISTORY * 2)) {
-        if (msg && typeof msg.role === 'string' && typeof msg.content === 'string') {
-          // 直接添加内容，不添加角色标签
-          contextString += `${msg.content}\n`;
-        }
+    // 格式化历史对话
+    for (const msg of history) {
+      if (msg && typeof msg.role === 'string' && typeof msg.content === 'string') {
+        contextString += `${msg.content}\n`;
       }
     }
 
-    // 直接添加用户问题，不添加"用户："前缀
     contextString += prompt;
 
     const geminiModel = await getGeminiModel();
@@ -150,24 +210,16 @@ export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
 
-    // 改进前缀检测
-    // 如果回复以"AI："或类似前缀开头，移除这个前缀
+    // 移除可能的 AI 前缀
     if (text.match(/^(AI[:：]|Assistant[:：]|机器人[:：])/i)) {
       text = text.replace(/^(AI[:：]|Assistant[:：]|机器人[:：])\s*/i, '');
     }
 
-    // 更新对话历史
-    userHistory.messages = [
-      ...userHistory.messages.slice(-MAX_HISTORY * 2),
-      { role: 'user', content: prompt },
-      { role: 'assistant', content: text }
-    ];
-    userHistory.lastUpdate = Date.now();
-
-    // 限制历史记录大小
-    const MAX_HISTORY_SIZE = 50;
-    if (userHistory.messages.length > MAX_HISTORY_SIZE) {
-      userHistory.messages = userHistory.messages.slice(-MAX_HISTORY_SIZE);
+    // 使用 waitUntil 异步保存消息，不阻塞响应
+    if (cfContext?.ctx?.waitUntil && db) {
+      cfContext.ctx.waitUntil(saveMessages(db, userId + '_gemini', prompt, text));
+    } else if (db) {
+      await saveMessages(db, userId + '_gemini', prompt, text);
     }
 
     return text;
@@ -176,8 +228,8 @@ export async function getGeminiChatCompletion(prompt, userId, retryCount = 0) {
     // 添加重试逻辑
     if (error.toString().includes('rate limit') && retryCount < MAX_RETRIES) {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return getGeminiChatCompletion(prompt, userId, retryCount + 1);
+      return getGeminiChatCompletion(prompt, userId, cfContext, retryCount + 1);
     }
-    throw error;  // 确保抛出错误
+    throw error;
   }
 }

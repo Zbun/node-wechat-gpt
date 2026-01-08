@@ -2,8 +2,8 @@ name = "node-wechat-gpt"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-# OpenNext 配置会自动处理 assets 目录
-# 如需使用 KV 存储对话历史，可取消注释以下配置
-# [[kv_namespaces]]
-# binding = "CONVERSATION_KV"
-# id = "your-kv-namespace-id"
+# D1 数据库配置 - 在 Cloudflare Dashboard 中绑定时会自动设置
+[[d1_databases]]
+binding = "DB"
+database_name = "wechat-gpt-db"
+database_id = "your-database-id"

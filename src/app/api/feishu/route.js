@@ -1,9 +1,6 @@
 // src/app/api/feishu/route.js
 import { getOpenAIChatCompletion, getGeminiChatCompletion } from '../gpt/route';
 
-// 启用 Edge Runtime（Cloudflare Pages 兼容）
-export const runtime = 'edge';
-
 // 飞书应用配置 (从环境变量中获取)
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
@@ -18,6 +15,20 @@ let tokenExpireTime = 0;
 // 添加消息ID缓存，用于去重
 const processedMessageIds = new Map();
 const MESSAGE_CACHE_TTL = 60 * 1000; // 1分钟缓存时间
+
+// 获取 Cloudflare context
+let getCloudflareContext;
+async function loadCloudflareContext() {
+  if (!getCloudflareContext) {
+    try {
+      const cfModule = await import('@opennextjs/cloudflare');
+      getCloudflareContext = cfModule.getCloudflareContext;
+    } catch {
+      getCloudflareContext = () => null;
+    }
+  }
+  return getCloudflareContext;
+}
 
 // 获取飞书访问令牌
 async function getAccessToken() {
@@ -114,7 +125,7 @@ async function verifyFeishuSignature(timestamp, signature) {
       false,
       ['sign']
     );
-    
+
     const signatureBuffer = await crypto.subtle.sign('HMAC', key, new Uint8Array(0));
     const sign = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 
@@ -130,7 +141,7 @@ function verifyToken(token) {
 }
 
 // 处理飞书消息事件，添加去重机制
-async function handleMessage(event) {
+async function handleMessage(event, cfContext) {
   const { message, sender } = event;
   const messageId = message.message_id;
 
@@ -176,13 +187,13 @@ async function handleMessage(event) {
 
     switch (gptModelPreference.toLowerCase()) {
       case 'openai':
-        aiResponse = await getOpenAIChatCompletion(userMessage, contextId);
+        aiResponse = await getOpenAIChatCompletion(userMessage, contextId, cfContext);
         break;
       case 'gemini':
-        aiResponse = await getGeminiChatCompletion(userMessage, contextId);
+        aiResponse = await getGeminiChatCompletion(userMessage, contextId, cfContext);
         break;
       default:
-        aiResponse = await getOpenAIChatCompletion(userMessage, contextId);
+        aiResponse = await getOpenAIChatCompletion(userMessage, contextId, cfContext);
         break;
     }
   } catch (error) {
@@ -208,6 +219,10 @@ export async function POST(request) {
     const body = await request.text();
     console.log('收到飞书请求:', body);
     const jsonBody = JSON.parse(body);
+
+    // 获取 Cloudflare context
+    await loadCloudflareContext();
+    const cfContext = getCloudflareContext ? await getCloudflareContext() : null;
 
     // 获取请求头信息
     const timestamp = request.headers.get('x-lark-request-timestamp');
@@ -255,7 +270,7 @@ export async function POST(request) {
     const { event } = jsonBody;
     // 事件处理
     if (jsonBody.header?.event_type === 'im.message.receive_v1') {
-      const response = await handleMessage(event);
+      const response = await handleMessage(event, cfContext);
 
       // 如果返回null，表示消息已处理过，不需要回复
       if (!response) {
