@@ -21,9 +21,11 @@ async function loadGoogleAI() {
 }
 
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
-const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || "4"); // 发送给 AI 的历史轮数
-const MAX_STORED_MESSAGES = 1000; // 每用户最多存储的消息数
-const MAX_RETRIES = 3;
+const MAX_MEMORY_HISTORY = 4; // 内存中保留的历史轮数
+const MEMORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟过期
+
+// 内存历史缓存（比 D1 快，不阻塞响应）
+const memoryHistory = new Map();
 
 // D1 数据库操作函数
 
@@ -169,10 +171,9 @@ async function callOpenAI(messages) {
  */
 export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) {
   try {
-    const db = cfContext?.env?.DB;
-
-    // 获取历史记录
-    const history = await getHistory(db, userId);
+    // 从内存获取历史记录（快速，不阻塞）
+    const cached = memoryHistory.get(userId);
+    const history = (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) ? cached.messages : [];
 
     const messages = [
       { role: "system", content: fixedRoleInstruction },
@@ -182,13 +183,14 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
 
     const assistantMessage = await callOpenAI(messages);
 
-    // 使用 waitUntil 异步保存消息，不阻塞响应
-    if (cfContext?.ctx?.waitUntil && db) {
-      cfContext.ctx.waitUntil(saveMessages(db, userId, prompt, assistantMessage));
-    } else if (db) {
-      // 降级：同步保存
-      await saveMessages(db, userId, prompt, assistantMessage);
-    }
+    // 更新内存缓存（保留最近2轮）
+    const newHistory = [
+      ...history,
+      { role: "user", content: prompt },
+      { role: "assistant", content: assistantMessage }
+    ].slice(-MAX_MEMORY_HISTORY * 2);
+
+    memoryHistory.set(userId, { messages: newHistory, time: Date.now() });
 
     return assistantMessage;
   } catch (error) {
