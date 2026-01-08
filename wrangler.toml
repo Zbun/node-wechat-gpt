@@ -1,9 +1,20 @@
 name = "node-wechat-gpt"
+main = ".open-next/worker.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-# D1 数据库配置 - 在 Cloudflare Dashboard 中绑定时会自动设置
-[[d1_databases]]
-binding = "DB"
-database_name = "wechat-gpt-db"
-database_id = "your-database-id"
+# 静态资源配置
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+# Worker 自引用（路由需要）
+[[services]]
+binding = "WORKER_SELF_REFERENCE"
+service = "node-wechat-gpt"
+
+# D1 数据库配置（可选）- 在 Dashboard 中绑定后会覆盖此配置
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "wechat-gpt-db"
+# database_id = "your-database-id"

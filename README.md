@@ -35,15 +35,15 @@
 
 > **注意**：数据库表会在首次使用时自动创建，无需手动执行 SQL。
 
-### 步骤三：创建 Pages 项目
+### 步骤三：创建 Workers 项目
 
 1. 进入 **Workers & Pages**
-2. 点击 **Create** > **Pages** > **Connect to Git**
+2. 点击 **Create** > **Import a repository**
 3. 授权并选择你 Fork 的仓库
 4. 配置构建设置：
-   - **Framework preset**: 留空
-   - **Build command**: `npm run pages:build`
-   - **Build output directory**: `.open-next/assets`
+   - **Build command**: `npm run deploy`
+   - **Deploy command**: 留空（deploy 命令已包含部署步骤）
+   - **Root directory**: 留空
 
 ### 步骤四：配置环境变量
 

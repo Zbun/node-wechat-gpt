@@ -7,9 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "pages:build": "npx @opennextjs/cloudflare build",
-    "pages:deploy": "npm run pages:build && wrangler pages deploy .open-next/assets --project-name=node-wechat-gpt",
-    "pages:dev": "npx @opennextjs/cloudflare dev"
+    "preview": "npx opennextjs-cloudflare build && npx opennextjs-cloudflare preview",
+    "deploy": "npx opennextjs-cloudflare build && npx opennextjs-cloudflare deploy",
+    "upload": "npx opennextjs-cloudflare build && npx opennextjs-cloudflare upload"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
