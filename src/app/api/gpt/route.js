@@ -160,6 +160,11 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
   try {
     const db = cfContext?.env?.DB;
 
+    // 调试日志
+    console.log('cfContext:', cfContext ? 'exists' : 'null');
+    console.log('cfContext.env:', cfContext?.env ? 'exists' : 'null');
+    console.log('DB binding:', db ? 'exists' : 'null');
+
     // 获取历史记录
     const history = await getHistory(db, userId);
 
