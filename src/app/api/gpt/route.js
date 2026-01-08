@@ -121,14 +121,34 @@ async function cleanupOldMessages(db, userId) {
   }
 }
 
-// OpenAI 配置
-const getOpenAIClient = async () => {
-  const OpenAIClass = await loadOpenAI();
-  return new OpenAIClass({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1"
+/**
+ * 使用原生 fetch 调用 OpenAI API（兼容 OpenRouter 等）
+ */
+async function callOpenAI(messages) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const baseURL = process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1";
+  const model = process.env.OPENAI_MODEL || "gpt-3.5-turbo";
+
+  const response = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: messages,
+    }),
   });
-};
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API请求失败 (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
 
 /**
  * OpenAI 聊天接口
@@ -149,13 +169,7 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
       { role: "user", content: prompt }
     ];
 
-    const openai = await getOpenAIClient();
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
-      messages: messages,
-    });
-
-    const assistantMessage = completion.choices[0].message.content;
+    const assistantMessage = await callOpenAI(messages);
 
     // 使用 waitUntil 异步保存消息，不阻塞响应
     if (cfContext?.ctx?.waitUntil && db) {
@@ -168,7 +182,6 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
     return assistantMessage;
   } catch (error) {
     console.error("OpenAI API Error:", error);
-    // 返回更详细的错误信息便于排查
     const errorMsg = error?.message || error?.toString() || '未知错误';
     throw new Error(`OpenAI调用失败: ${errorMsg}`);
   }
