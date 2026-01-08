@@ -36,20 +36,26 @@ let dbInitialized = false;
 async function initDatabase(db) {
   if (!db || dbInitialized) return;
   try {
-    await db.exec(`
+    console.log('正在初始化数据库表...');
+    // 分开执行 SQL 语句
+    await db.prepare(`
       CREATE TABLE IF NOT EXISTS chat_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_user_id ON chat_history(user_id);
-      CREATE INDEX IF NOT EXISTS idx_user_created ON chat_history(user_id, created_at);
-    `);
+      )
+    `).run();
+
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_user_id ON chat_history(user_id)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_user_created ON chat_history(user_id, created_at)`).run();
+
     dbInitialized = true;
+    console.log('数据库表初始化成功');
   } catch (error) {
-    // 表可能已存在，忽略错误
+    console.error('数据库初始化失败:', error);
+    // 表可能已存在
     dbInitialized = true;
   }
 }

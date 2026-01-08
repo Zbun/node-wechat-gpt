@@ -74,33 +74,21 @@
 
 > **注意**：D1 绑定是可选的。不配置时不保留历史记录，每次只发送当前消息。
 >
-> **限制**：由于 Cloudflare 的限制，D1 绑定需要在每次重新部署后手动重新配置。
+> ⚠️ **重要**：由于 Cloudflare 限制，**每次代码更新部署后需要重新绑定 D1**。
 
-1. 部署完成后，进入项目 **Settings** > **Functions** > **D1 database bindings**
+1. 部署完成后，进入项目 **Settings** > **Bindings** > **D1 database bindings**
 2. 点击 **Add binding**：
    - **Variable name**: `DB`
-   - **D1 database**: 选择 `wechat-gpt-db`
+   - **D1 database**: 选择在步骤二创建的数据库
 3. 点击 **Save**
+4. 进入 **Deployments** 点击 **Retry deployment** 使绑定生效
 
-### 步骤六：配置兼容性标志
-
-1. 进入项目 **Settings** > **Functions** > **Compatibility flags**
-2. 在 **Production** 和 **Preview** 中都添加：`nodejs_compat`
-3. 设置 **Compatibility date** 为 `2024-12-01` 或更新日期
-4. 点击 **Save**
-
-### 步骤七：重新部署
-
-1. 进入 **Deployments** 标签
-2. 找到最新的部署，点击 **...** > **Retry deployment**
-3. 等待部署完成
-
-### 步骤八：配置微信公众号
+### 步骤六：配置微信公众号
 
 1. 登录 [微信公众平台](https://mp.weixin.qq.com/)
 2. 进入 **设置与开发** > **基本配置**
 3. 配置服务器：
-   - **URL**: `https://你的项目.pages.dev/api/wechat`
+   - **URL**: `https://你的项目名.workers.dev/api/wechat`
    - **Token**: 与环境变量 `WECHAT_TOKEN` 一致
    - **消息加解密方式**: 明文模式
 4. 启用服务器配置
