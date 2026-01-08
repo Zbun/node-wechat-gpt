@@ -116,7 +116,7 @@ export async function POST(request) {
           }
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
-          gptResponse = `抱歉，${gptModelPreference.toUpperCase()} 服务暂时不可用。`;
+          gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
         }
 
         // 微信文本消息有长度限制，截断过长的回复

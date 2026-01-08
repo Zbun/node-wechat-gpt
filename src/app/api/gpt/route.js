@@ -168,7 +168,9 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
     return assistantMessage;
   } catch (error) {
     console.error("OpenAI API Error:", error);
-    throw error;
+    // 返回更详细的错误信息便于排查
+    const errorMsg = error?.message || error?.toString() || '未知错误';
+    throw new Error(`OpenAI调用失败: ${errorMsg}`);
   }
 }
 
