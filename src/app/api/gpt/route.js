@@ -57,16 +57,59 @@ async function callOpenAI(messages) {
 }
 
 /**
+ * 从 KV 获取历史记录
+ */
+async function getHistoryFromKV(kv, userId) {
+  if (!kv) return null;
+  try {
+    const data = await kv.get(userId, { type: 'json' });
+    return data;
+  } catch (error) {
+    console.error('KV 读取失败:', error);
+    return null;
+  }
+}
+
+/**
+ * 保存历史记录到 KV（异步，不阻塞响应）
+ */
+async function saveHistoryToKV(kv, userId, messages) {
+  if (!kv) return;
+  try {
+    await kv.put(userId, JSON.stringify(messages), {
+      expirationTtl: 600  // 10分钟后过期
+    });
+  } catch (error) {
+    console.error('KV 写入失败:', error);
+  }
+}
+
+/**
  * OpenAI 聊天接口
  * @param {string} prompt - 用户消息
  * @param {string} userId - 用户ID
- * @param {Object} cfContext - Cloudflare context，用于 waitUntil
+ * @param {Object} cfContext - Cloudflare context，用于 waitUntil 和 KV
  */
 export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) {
   try {
-    // 从内存获取历史记录（快速，不阻塞）
+    const kv = cfContext?.env?.CHAT_HISTORY;
+    let history = [];
+    let needKVWrite = false;
+
+    // 1. 先查内存缓存
     const cached = memoryHistory.get(userId);
-    const history = (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) ? cached.messages : [];
+    if (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) {
+      history = cached.messages;
+    } else if (kv) {
+      // 2. 内存没有，查 KV
+      const kvData = await getHistoryFromKV(kv, userId);
+      if (kvData) {
+        history = kvData;
+        // 同步到内存
+        memoryHistory.set(userId, { messages: history, time: Date.now() });
+      }
+      needKVWrite = true;  // 内存 miss 了，之后需要写 KV
+    }
 
     const messages = [
       { role: "system", content: fixedRoleInstruction },
@@ -76,14 +119,20 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
 
     const assistantMessage = await callOpenAI(messages);
 
-    // 更新内存缓存（保留最近2轮）
+    // 更新历史（保留最近4轮）
     const newHistory = [
       ...history,
       { role: "user", content: prompt },
       { role: "assistant", content: assistantMessage }
     ].slice(-MAX_MEMORY_HISTORY * 2);
 
+    // 更新内存缓存
     memoryHistory.set(userId, { messages: newHistory, time: Date.now() });
+
+    // 只在内存 miss 时才写 KV（减少写入次数）
+    if (needKVWrite && kv && cfContext?.ctx?.waitUntil) {
+      cfContext.ctx.waitUntil(saveHistoryToKV(kv, userId, newHistory));
+    }
 
     return assistantMessage;
   } catch (error) {
@@ -105,15 +154,30 @@ const getGeminiModel = async () => {
  * Gemini 聊天接口
  * @param {string} prompt - 用户消息
  * @param {string} userId - 用户ID
- * @param {Object} cfContext - Cloudflare context，用于 waitUntil
+ * @param {Object} cfContext - Cloudflare context，用于 waitUntil 和 KV
  * @param {number} retryCount - 重试次数
  */
 export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0) {
+  const MAX_RETRIES = 3;
   try {
-    const db = cfContext?.env?.DB;
+    const kv = cfContext?.env?.CHAT_HISTORY;
+    const geminiUserId = userId + '_gemini';
+    let history = [];
+    let needKVWrite = false;
 
-    // 获取历史记录
-    const history = await getHistory(db, userId + '_gemini');
+    // 1. 先查内存缓存
+    const cached = memoryHistory.get(geminiUserId);
+    if (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) {
+      history = cached.messages;
+    } else if (kv) {
+      // 2. 内存没有，查 KV
+      const kvData = await getHistoryFromKV(kv, geminiUserId);
+      if (kvData) {
+        history = kvData;
+        memoryHistory.set(geminiUserId, { messages: history, time: Date.now() });
+      }
+      needKVWrite = true;
+    }
 
     let contextString = fixedRoleInstruction + "\n\n";
 
@@ -136,17 +200,24 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
       text = text.replace(/^(AI[:：]|Assistant[:：]|机器人[:：])\s*/i, '');
     }
 
-    // 使用 waitUntil 异步保存消息，不阻塞响应
-    if (cfContext?.ctx?.waitUntil && db) {
-      cfContext.ctx.waitUntil(saveMessages(db, userId + '_gemini', prompt, text));
-    } else if (db) {
-      await saveMessages(db, userId + '_gemini', prompt, text);
+    // 更新历史（保留最近4轮）
+    const newHistory = [
+      ...history,
+      { role: "user", content: prompt },
+      { role: "assistant", content: text }
+    ].slice(-MAX_MEMORY_HISTORY * 2);
+
+    // 更新内存缓存
+    memoryHistory.set(geminiUserId, { messages: newHistory, time: Date.now() });
+
+    // 只在内存 miss 时才写 KV
+    if (needKVWrite && kv && cfContext?.ctx?.waitUntil) {
+      cfContext.ctx.waitUntil(saveHistoryToKV(kv, geminiUserId, newHistory));
     }
 
     return text;
   } catch (error) {
     console.error("Gemini API Error:", error);
-    // 添加重试逻辑
     if (error.toString().includes('rate limit') && retryCount < MAX_RETRIES) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       return getGeminiChatCompletion(prompt, userId, cfContext, retryCount + 1);

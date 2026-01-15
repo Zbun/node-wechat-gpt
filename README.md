@@ -5,7 +5,7 @@
 ## 功能特点
 
 - 🤖 支持 OpenAI 和 Google Gemini AI 模型
-- 💬 内存缓存保留最近4轮对话上下文
+- 💬 内存 + KV 混合缓存，保留最近4轮对话上下文
 - 🔄 智能切换，可配置默认模型
 - 🎯 自定义 AI 角色设定
 - 👋 新用户关注自动回复
@@ -25,18 +25,26 @@
 1. 登录 GitHub
 2. Fork 本仓库到你的账户
 
-### 步骤二：创建 Workers 项目
+### 步骤二：创建 KV 命名空间（可选，推荐）
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. 进入 **Workers & Pages**
-3. 点击 **Create** > **Import a repository**
-4. 授权并选择你 Fork 的仓库
-5. 配置构建设置：
+> **说明**：KV 用于在不同实例间同步对话历史。不配置时仅使用内存缓存。
+
+1. 进入 **Workers & Pages** > **KV**
+2. 点击 **Create a namespace**
+3. 输入名称：`wechat-gpt-history`
+4. 点击 **Add**
+
+### 步骤三：创建 Workers 项目
+
+1. 进入 **Workers & Pages**
+2. 点击 **Create** > **Import a repository**
+3. 授权并选择你 Fork 的仓库
+4. 配置构建设置：
    - **Build command**: `npx opennextjs-cloudflare build`
    - **Deploy command**: `npx wrangler deploy`
    - **Root directory**: 留空
 
-### 步骤三：配置环境变量
+### 步骤四：配置环境变量
 
 **构建变量（Build settings > Environment variables）：**
 
@@ -58,7 +66,16 @@
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
 
-### 步骤四：配置微信公众号
+### 步骤五：绑定 KV 命名空间（可选）
+
+1. 部署完成后，进入项目 **Settings** > **Bindings** > **KV namespace bindings**
+2. 点击 **Add binding**：
+   - **Variable name**: `CHAT_HISTORY`
+   - **KV namespace**: 选择 `wechat-gpt-history`
+3. 点击 **Save**
+4. 进入 **Deployments** 点击 **Retry deployment** 使绑定生效
+
+### 步骤六：配置微信公众号
 
 1. 登录 [微信公众平台](https://mp.weixin.qq.com/)
 2. 进入 **设置与开发** > **基本配置**
@@ -96,12 +113,13 @@
 
 ## 技术说明
 
-### 对话历史
+### 对话历史存储
 
-使用内存缓存保存对话历史：
-- 每用户保留最近4轮对话
-- 缓存10分钟后自动清除
-- 不阻塞响应，满足微信5秒限制
+使用内存 + KV 混合缓存：
+- **内存优先**：同一实例内快速读取，不阻塞响应
+- **KV 备份**：内存 miss 时从 KV 读取，实例间同步
+- **智能写入**：只在内存 miss 时写 KV，减少写入次数
+- 每用户保留最近4轮对话，10分钟后自动清除
 
 ### 文件结构
 

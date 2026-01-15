@@ -2,7 +2,8 @@ name = "node-wechat-gpt"
 main = ".open-next/worker.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
-keep_vars = true  # 保持环境变量，重新部署不清除
+keep_vars = true      # 保持环境变量，重新部署不清除
+keep_bindings = true  # 保持 KV 等绑定，重新部署不清除
 
 # 静态资源配置
 [assets]
@@ -13,3 +14,8 @@ binding = "ASSETS"
 [[services]]
 binding = "WORKER_SELF_REFERENCE"
 service = "node-wechat-gpt"
+
+# KV 命名空间配置（在 Dashboard 中创建并绑定）
+# [[kv_namespaces]]
+# binding = "CHAT_HISTORY"
+# id = "your-kv-namespace-id"
