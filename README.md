@@ -50,7 +50,7 @@
 
 | 变量名 | 说明 | 必填 |
 |--------|------|------|
-| `NODE_VERSION` | Node.js 版本，设置为 `20` | ✅ |
+| `NODE_VERSION` | Node.js 版本，设置为 `24` | ✅ |
 
 **运行时变量（Settings > Variables and Secrets）：**
 
