@@ -56,26 +56,43 @@
 
 **运行时变量（Settings > Variables and Secrets）：**
 
+先看最少配置。大多数情况下，你只需要配下面这些：
+
 | 变量名 | 说明 | 必填 |
 |--------|------|------|
 | `WECHAT_TOKEN` | 微信公众号令牌 | ✅ |
-| `OPENAI_API_KEY` | OpenAI API 密钥 | 使用 OpenAI 时必填 |
+| `GPT_MODEL` | 使用哪个模型通道，填 `openai` 或 `gemini` | ✅ |
+| `OPENAI_API_KEY` | OpenAI / OpenRouter 密钥 | 使用 `openai` 时必填 |
+| `GEMINI_API_KEY` | Gemini 密钥 | 使用 `gemini` 时必填 |
+
+如果你只是想先跑起来，建议按下面二选一：
+
+1. 用 OpenAI / OpenRouter：`WECHAT_TOKEN`、`GPT_MODEL=openai`、`OPENAI_API_KEY`
+2. 用 Gemini：`WECHAT_TOKEN`、`GPT_MODEL=gemini`、`GEMINI_API_KEY`
+
+下面这些都不是必须的，先不配也能用：
+
+| 变量名 | 说明 | 必填 |
+|--------|------|------|
 | `OPENAI_MODEL` | OpenAI 模型名称 | 可选，默认 `gpt-3.5-turbo` |
 | `OPENAI_API_BASE_URL` | 自定义 API 地址（如 OpenRouter） | 可选 |
-| `GEMINI_API_KEY` | Google Gemini API 密钥 | 使用 Gemini 时必填 |
 | `GEMINI_MODEL_NAME` | Gemini 模型名称 | 可选，默认 `gemini-2.0-flash-lite` |
-| `GPT_MODEL` | 默认 AI 服务 | 默认 `openai`，可选 `gemini` |
-| `WECHAT_GPT_MODEL` | 微信渠道专用 AI 服务 | 可选，优先级高于 `GPT_MODEL` |
-| `WECHAT_OPENAI_API_KEY` | 微信渠道专用 OpenAI / OpenRouter 密钥 | 可选 |
-| `WECHAT_OPENAI_API_BASE_URL` | 微信渠道专用 OpenAI 兼容地址 | 可选 |
-| `WECHAT_OPENAI_MODEL` | 微信渠道专用 OpenAI 模型 | 可选 |
-| `WECHAT_GEMINI_API_KEY` | 微信渠道专用 Gemini 密钥 | 可选 |
-| `WECHAT_GEMINI_MODEL_NAME` | 微信渠道专用 Gemini 模型 | 可选 |
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
 | `WECHAT_PRE_PROMPT` | 微信渠道专用提示词 | 可选，默认更偏纯文本、短回复、禁 Markdown |
 | `WECHAT_REPLY_TIMEOUT_MS` | 微信被动回复超时阈值 | 可选，默认 `4500` 毫秒 |
 | `WECHAT_OPENAI_MAX_TOKENS` | 微信渠道 OpenAI 最大输出 token | 可选，默认 `220` |
+| `WECHAT_USE_KV_HISTORY` | 微信渠道是否启用 KV 历史读取 | 可选，默认 `false` |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
+
+建议先不要动这些进阶参数：
+
+1. `WECHAT_REPLY_TIMEOUT_MS`
+2. `WECHAT_OPENAI_MAX_TOKENS`
+3. `WECHAT_USE_KV_HISTORY`
+4. `GPT_PRE_PROMPT`
+5. `WECHAT_PRE_PROMPT`
+
+先确认公众号能稳定回复，再按需要慢慢加。
 
 ### 步骤五：绑定 KV 命名空间（可选）
 
@@ -167,7 +184,8 @@ id = "你的 KV namespace ID"
 - 如需自定义微信回复风格，可设置 `WECHAT_PRE_PROMPT`
 - 微信被动回复默认会在 4.5 秒内超时降级，避免超过公众号 5 秒限制导致整条消息无回复
 - 微信渠道默认只带最近 2 轮上下文，并限制 OpenAI 输出 token，优先保证在公众号超时前回包
-- 微信渠道可以单独指定模型与密钥，建议公众号优先使用更快的模型，例如 `WECHAT_GPT_MODEL=gemini`
+- 微信渠道和其他渠道共用同一套模型配置，使用 `GPT_MODEL` 决定走 `openai` 还是 `gemini`
+- 微信渠道默认不读取 KV 历史，优先保证时延；如确实需要跨实例上下文，再显式设置 `WECHAT_USE_KV_HISTORY=true`
 
 ### 文件结构
 

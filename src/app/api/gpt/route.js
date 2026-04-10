@@ -30,15 +30,7 @@ const DEFAULT_WECHAT_OPENAI_MAX_TOKENS = 220;
 // 内存历史缓存（比 D1 快，不阻塞响应）
 const memoryHistory = new Map();
 
-function getOpenAIConfig(channel = 'default') {
-  if (channel === 'wechat') {
-    return {
-      apiKey: process.env.WECHAT_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-      baseURL: process.env.WECHAT_OPENAI_API_BASE_URL || process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
-      model: process.env.WECHAT_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-3.5-turbo",
-    };
-  }
-
+function getOpenAIConfig() {
   return {
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
@@ -46,11 +38,7 @@ function getOpenAIConfig(channel = 'default') {
   };
 }
 
-function getGeminiModelName(channel = 'default') {
-  if (channel === 'wechat') {
-    return process.env.WECHAT_GEMINI_MODEL_NAME || process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
-  }
-
+function getGeminiModelName() {
   return process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
 }
 
@@ -58,7 +46,7 @@ function getGeminiModelName(channel = 'default') {
  * 使用原生 fetch 调用 OpenAI API（兼容 OpenRouter 等）
  */
 async function callOpenAI(messages, channel = 'default') {
-  const { apiKey, baseURL, model } = getOpenAIConfig(channel);
+  const { apiKey, baseURL, model } = getOpenAIConfig();
   const maxTokens = channel === 'wechat'
     ? Number(process.env.WECHAT_OPENAI_MAX_TOKENS || DEFAULT_WECHAT_OPENAI_MAX_TOKENS)
     : undefined;
@@ -137,6 +125,14 @@ function trimHistoryForChannel(history, channel = 'default') {
   return history;
 }
 
+function shouldUseKVHistory(channel = 'default') {
+  if (channel !== 'wechat') {
+    return true;
+  }
+
+  return process.env.WECHAT_USE_KV_HISTORY === 'true';
+}
+
 /**
  * OpenAI 聊天接口
  * @param {string} prompt - 用户消息
@@ -146,7 +142,7 @@ function trimHistoryForChannel(history, channel = 'default') {
  */
 export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, channel = 'default') {
   try {
-    const kv = cfContext?.env?.CHAT_HISTORY;
+    const kv = shouldUseKVHistory(channel) ? cfContext?.env?.CHAT_HISTORY : null;
     let history = [];
     let needKVWrite = false;
 
@@ -206,15 +202,6 @@ const getGeminiModel = async () => {
   return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 };
 
-const getChannelGeminiModel = async (channel = 'default') => {
-  const GoogleAIClass = await loadGoogleAI();
-  const apiKey = channel === 'wechat'
-    ? process.env.WECHAT_GEMINI_API_KEY || process.env.GEMINI_API_KEY
-    : process.env.GEMINI_API_KEY;
-  const genAI = new GoogleAIClass(apiKey);
-  return genAI.getGenerativeModel({ model: getGeminiModelName(channel) }, { apiVersion: 'v1' });
-};
-
 /**
  * Gemini 聊天接口
  * @param {string} prompt - 用户消息
@@ -226,7 +213,7 @@ const getChannelGeminiModel = async (channel = 'default') => {
 export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0, channel = 'default') {
   const MAX_RETRIES = 3;
   try {
-    const kv = cfContext?.env?.CHAT_HISTORY;
+    const kv = shouldUseKVHistory(channel) ? cfContext?.env?.CHAT_HISTORY : null;
     const geminiUserId = userId + '_gemini';
     let history = [];
     let needKVWrite = false;
@@ -257,7 +244,7 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
 
     contextString += prompt;
 
-    const geminiModel = channel === 'wechat' ? await getChannelGeminiModel(channel) : await getGeminiModel();
+    const geminiModel = await getGeminiModel();
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
