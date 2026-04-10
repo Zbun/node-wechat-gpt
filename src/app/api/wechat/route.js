@@ -110,7 +110,7 @@ async function loadDependencies() {
 const wechatToken = process.env.WECHAT_TOKEN;
 
 function getWechatModelPreference() {
-  return process.env.GPT_MODEL || 'openai';
+  return process.env.WECHAT_GPT_MODEL || process.env.GPT_MODEL || 'openai';
 }
 
 // 使用 Web Crypto API 验证微信公众号请求签名

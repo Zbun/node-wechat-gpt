@@ -30,7 +30,15 @@ const DEFAULT_WECHAT_OPENAI_MAX_TOKENS = 220;
 // 内存历史缓存（比 D1 快，不阻塞响应）
 const memoryHistory = new Map();
 
-function getOpenAIConfig() {
+function getOpenAIConfig(channel = 'default') {
+  if (channel === 'wechat') {
+    return {
+      apiKey: process.env.WECHAT_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+      baseURL: process.env.WECHAT_OPENAI_API_BASE_URL || process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
+      model: process.env.WECHAT_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-3.5-turbo",
+    };
+  }
+
   return {
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
@@ -38,15 +46,27 @@ function getOpenAIConfig() {
   };
 }
 
-function getGeminiModelName() {
+function getGeminiModelName(channel = 'default') {
+  if (channel === 'wechat') {
+    return process.env.WECHAT_GEMINI_MODEL_NAME || process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+  }
+
   return process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+}
+
+function getGeminiApiKey(channel = 'default') {
+  if (channel === 'wechat') {
+    return process.env.WECHAT_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  }
+
+  return process.env.GEMINI_API_KEY;
 }
 
 /**
  * 使用原生 fetch 调用 OpenAI API（兼容 OpenRouter 等）
  */
 async function callOpenAI(messages, channel = 'default') {
-  const { apiKey, baseURL, model } = getOpenAIConfig();
+  const { apiKey, baseURL, model } = getOpenAIConfig(channel);
   const maxTokens = channel === 'wechat'
     ? Number(process.env.WECHAT_OPENAI_MAX_TOKENS || DEFAULT_WECHAT_OPENAI_MAX_TOKENS)
     : undefined;
@@ -195,10 +215,10 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, 
 }
 
 // Gemini 配置 (使用 @google/generative-ai)
-const getGeminiModel = async () => {
+const getGeminiModel = async (channel = 'default') => {
   const GoogleAIClass = await loadGoogleAI();
-  const genAI = new GoogleAIClass(process.env.GEMINI_API_KEY);
-  const geminiModelName = getGeminiModelName();
+  const genAI = new GoogleAIClass(getGeminiApiKey(channel));
+  const geminiModelName = getGeminiModelName(channel);
   return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
 };
 
@@ -244,7 +264,7 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
 
     contextString += prompt;
 
-    const geminiModel = await getGeminiModel();
+    const geminiModel = await getGeminiModel(channel);
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
