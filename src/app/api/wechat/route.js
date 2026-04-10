@@ -10,6 +10,31 @@ let getCloudflareContext;
 const processedMessages = new Map();
 const MESSAGE_CACHE_TTL = 60000; // 1分钟
 
+function stripMarkdownForWechat(text) {
+  if (typeof text !== 'string' || !text) {
+    return '';
+  }
+
+  return text
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z0-9_-]*\n?/g, '').trim())
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, (match) => match.replace('.', '、'))
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1：$2')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-|:]{3,}\s*$/gm, '')
+    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
+    .replace(/\$([^$]+)\$/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function loadDependencies() {
   if (!XMLParser) {
     const fastXmlParser = await import('fast-xml-parser');
@@ -126,20 +151,22 @@ export async function POST(request) {
         try {
           switch (gptModelPreference.toLowerCase()) {
             case 'openai':
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
               break;
             case 'gemini':
-              gptResponse = await getGeminiChatCompletion(userMessage, fromUser, cfContext);
+              gptResponse = await getGeminiChatCompletion(userMessage, fromUser, cfContext, 0, 'wechat');
               break;
             default:
               console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
               break;
           }
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
           gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
         }
+
+        gptResponse = stripMarkdownForWechat(gptResponse);
 
         // 微信文本消息有长度限制，截断过长的回复
         const MAX_MSG_LENGTH = 2000;

@@ -23,6 +23,7 @@ async function loadGoogleAI() {
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
 const MAX_MEMORY_HISTORY = 4; // 内存中保留的历史轮数
 const MEMORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟过期
+const wechatChannelInstruction = process.env.WECHAT_PRE_PROMPT || "当前输出渠道是微信公众号文本消息。请优先直接回答结论，表达尽量简短，避免冗长开场白。只返回适合微信文本消息的纯文本内容。不要使用 Markdown、代码块、标题、表格、HTML、XML、LaTeX、无序列表、有序列表、加粗、斜体、链接标记，也不要输出反引号。不要用 JSON、YAML、伪代码格式组织内容。需要分点时请直接使用中文序号或短句。除非用户明确要求，否则不要贴长链接、代码示例或大段引用。";
 
 // 内存历史缓存（比 D1 快，不阻塞响应）
 const memoryHistory = new Map();
@@ -84,13 +85,21 @@ async function saveHistoryToKV(kv, userId, messages) {
   }
 }
 
+function buildSystemInstruction(channel = 'default') {
+  if (channel === 'wechat') {
+    return `${fixedRoleInstruction}\n\n${wechatChannelInstruction}`;
+  }
+  return fixedRoleInstruction;
+}
+
 /**
  * OpenAI 聊天接口
  * @param {string} prompt - 用户消息
  * @param {string} userId - 用户ID
  * @param {Object} cfContext - Cloudflare context，用于 waitUntil 和 KV
+ * @param {string} channel - 回复渠道
  */
-export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) {
+export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, channel = 'default') {
   try {
     const kv = cfContext?.env?.CHAT_HISTORY;
     let history = [];
@@ -112,7 +121,7 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null) 
     }
 
     const messages = [
-      { role: "system", content: fixedRoleInstruction },
+      { role: "system", content: buildSystemInstruction(channel) },
       ...history,
       { role: "user", content: prompt }
     ];
@@ -156,8 +165,9 @@ const getGeminiModel = async () => {
  * @param {string} userId - 用户ID
  * @param {Object} cfContext - Cloudflare context，用于 waitUntil 和 KV
  * @param {number} retryCount - 重试次数
+ * @param {string} channel - 回复渠道
  */
-export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0) {
+export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0, channel = 'default') {
   const MAX_RETRIES = 3;
   try {
     const kv = cfContext?.env?.CHAT_HISTORY;
@@ -179,7 +189,7 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
       needKVWrite = true;
     }
 
-    let contextString = fixedRoleInstruction + "\n\n";
+    let contextString = buildSystemInstruction(channel) + "\n\n";
 
     // 格式化历史对话
     for (const msg of history) {
@@ -220,7 +230,7 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
     console.error("Gemini API Error:", error);
     if (error.toString().includes('rate limit') && retryCount < MAX_RETRIES) {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return getGeminiChatCompletion(prompt, userId, cfContext, retryCount + 1);
+      return getGeminiChatCompletion(prompt, userId, cfContext, retryCount + 1, channel);
     }
     throw error;
   }

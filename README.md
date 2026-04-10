@@ -66,6 +66,7 @@
 | `GEMINI_MODEL_NAME` | Gemini 模型名称 | 可选，默认 `gemini-2.0-flash-lite` |
 | `GPT_MODEL` | 默认 AI 服务 | 默认 `openai`，可选 `gemini` |
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
+| `WECHAT_PRE_PROMPT` | 微信渠道专用提示词 | 可选，默认更偏纯文本、短回复、禁 Markdown |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
 
 ### 步骤五：绑定 KV 命名空间（可选）
@@ -150,6 +151,12 @@ id = "你的 KV namespace ID"
 - **KV 命名空间数量**：1 个
 - **KV Key 规则**：OpenAI 使用 `userId`，Gemini 使用 `userId_gemini`
 - 每个 Key 保留最近4轮对话（共 8 条消息），10分钟后自动清除
+
+### 微信渠道输出约束
+
+- 微信渠道默认会额外要求模型输出纯文本，避免 Markdown、代码块、表格、HTML、LaTeX 等不适合公众号文本消息的格式
+- 微信出口会再做一次文本清洗，兜底移除残留的 Markdown / HTML / LaTeX 标记
+- 如需自定义微信回复风格，可设置 `WECHAT_PRE_PROMPT`
 
 ### 文件结构
 
