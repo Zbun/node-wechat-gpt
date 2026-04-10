@@ -52,7 +52,7 @@
 
 | 变量名 | 说明 | 必填 |
 |--------|------|------|
-| `NODE_VERSION` | Node.js 版本，设置为 `24` | ✅ |
+| `NODE_VERSION` | Node.js 版本，设置为 `20` | 推荐 |
 
 **运行时变量（Settings > Variables and Secrets）：**
 
@@ -76,7 +76,16 @@
 |------------|------|------|
 | `CHAT_HISTORY` | 1 个 | 存储每个用户的对话历史 |
 
-如果你使用 `wrangler deploy` 部署，也可以直接在 [wrangler.toml](wrangler.toml) 中填写：
+默认仓库 **不会** 在 [wrangler.toml](wrangler.toml) 里写死 KV namespace ID，避免直接部署时因为占位符或环境差异失败。
+
+首次部署建议这样做：
+
+1. 先直接部署，不配置 KV 也可以运行
+2. 部署成功后，到 Cloudflare Dashboard 里添加 KV 绑定
+3. 绑定变量名使用 `CHAT_HISTORY`
+4. 重新部署一次让绑定生效
+
+如果你明确要用 `wrangler.toml` 管理 KV，再手动填写真实 ID：
 
 ```toml
 [[kv_namespaces]]
@@ -124,7 +133,9 @@ id = "你的 KV namespace ID"
 - 考虑使用更快的模型（如 `gemini-2.0-flash-lite`）
 
 **部署失败**
-- 确认 `NODE_VERSION` 环境变量设置为 `24`
+- 如使用 Cloudflare 默认 Node 环境，项目已兼容 Node 20
+- 如果你手动设置了 `NODE_VERSION`，建议使用 `20`
+- 不要在 [wrangler.toml](wrangler.toml) 中保留占位的 KV ID，例如 `your-kv-namespace-id`
 - 查看构建日志排查具体错误
 
 ## 技术说明

@@ -3,7 +3,6 @@ main = ".open-next/worker.js"
 compatibility_date = "2026-04-09"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 keep_vars = true      # 保持环境变量，重新部署不清除
-keep_bindings = true  # 保持 KV 等绑定，重新部署不清除
 
 # 静态资源配置
 [assets]
@@ -15,9 +14,8 @@ binding = "ASSETS"
 binding = "WORKER_SELF_REFERENCE"
 service = "node-wechat-gpt"
 
-# KV 命名空间配置
-# 在 Cloudflare Dashboard 中先创建 1 个 KV namespace，名称可用 wechat-gpt-history
-# 然后把下面的 id 替换成实际的 namespace ID
-[[kv_namespaces]]
-binding = "CHAT_HISTORY"
-id = "your-kv-namespace-id"
+# KV 可选，不在仓库里写死具体 namespace ID，避免覆盖用户线上配置或因占位符导致部署失败。
+# 如需通过 wrangler.toml 管理，再手动添加：
+# [[kv_namespaces]]
+# binding = "CHAT_HISTORY"
+# id = "你的实际 KV namespace ID"
