@@ -65,9 +65,16 @@
 | `GEMINI_API_KEY` | Google Gemini API 密钥 | 使用 Gemini 时必填 |
 | `GEMINI_MODEL_NAME` | Gemini 模型名称 | 可选，默认 `gemini-2.0-flash-lite` |
 | `GPT_MODEL` | 默认 AI 服务 | 默认 `openai`，可选 `gemini` |
+| `WECHAT_GPT_MODEL` | 微信渠道专用 AI 服务 | 可选，优先级高于 `GPT_MODEL` |
+| `WECHAT_OPENAI_API_KEY` | 微信渠道专用 OpenAI / OpenRouter 密钥 | 可选 |
+| `WECHAT_OPENAI_API_BASE_URL` | 微信渠道专用 OpenAI 兼容地址 | 可选 |
+| `WECHAT_OPENAI_MODEL` | 微信渠道专用 OpenAI 模型 | 可选 |
+| `WECHAT_GEMINI_API_KEY` | 微信渠道专用 Gemini 密钥 | 可选 |
+| `WECHAT_GEMINI_MODEL_NAME` | 微信渠道专用 Gemini 模型 | 可选 |
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
 | `WECHAT_PRE_PROMPT` | 微信渠道专用提示词 | 可选，默认更偏纯文本、短回复、禁 Markdown |
 | `WECHAT_REPLY_TIMEOUT_MS` | 微信被动回复超时阈值 | 可选，默认 `4500` 毫秒 |
+| `WECHAT_OPENAI_MAX_TOKENS` | 微信渠道 OpenAI 最大输出 token | 可选，默认 `220` |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
 
 ### 步骤五：绑定 KV 命名空间（可选）
@@ -159,6 +166,8 @@ id = "你的 KV namespace ID"
 - 微信出口会再做一次文本清洗，兜底移除残留的 Markdown / HTML / LaTeX 标记
 - 如需自定义微信回复风格，可设置 `WECHAT_PRE_PROMPT`
 - 微信被动回复默认会在 4.5 秒内超时降级，避免超过公众号 5 秒限制导致整条消息无回复
+- 微信渠道默认只带最近 2 轮上下文，并限制 OpenAI 输出 token，优先保证在公众号超时前回包
+- 微信渠道可以单独指定模型与密钥，建议公众号优先使用更快的模型，例如 `WECHAT_GPT_MODEL=gemini`
 
 ### 文件结构
 

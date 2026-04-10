@@ -108,7 +108,7 @@ async function loadDependencies() {
 
 // 微信公众号配置 (从环境变量中获取)
 const wechatToken = process.env.WECHAT_TOKEN;
-const gptModelPreference = process.env.GPT_MODEL || 'openai';
+const gptModelPreference = process.env.WECHAT_GPT_MODEL || process.env.GPT_MODEL || 'openai';
 
 // 使用 Web Crypto API 验证微信公众号请求签名
 async function verifySignature(signature, timestamp, nonce) {

@@ -23,18 +23,54 @@ async function loadGoogleAI() {
 const fixedRoleInstruction = process.env.GPT_PRE_PROMPT || "你是一个小助手，用相同的语言回答问题。";
 const MAX_MEMORY_HISTORY = 4; // 内存中保留的历史轮数
 const MEMORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟过期
-const wechatChannelInstruction = process.env.WECHAT_PRE_PROMPT || "当前输出渠道是微信公众号文本消息。请优先直接回答结论，表达尽量简短，避免冗长开场白。只返回适合微信文本消息的纯文本内容。不要使用 Markdown、代码块、标题、表格、HTML、XML、LaTeX、无序列表、有序列表、加粗、斜体、链接标记，也不要输出反引号。不要用 JSON、YAML、伪代码格式组织内容。需要分点时请直接使用中文序号或短句。除非用户明确要求，否则不要贴长链接、代码示例或大段引用。";
+const wechatChannelInstruction = process.env.WECHAT_PRE_PROMPT || "当前输出渠道是微信公众号文本消息。请优先直接回答结论，表达尽量简短，避免冗长开场白。只返回适合微信文本消息的纯文本内容。不要使用 Markdown、代码块、标题、表格、HTML、XML、LaTeX、无序列表、有序列表、加粗、斜体、链接标记，也不要输出反引号。不要用 JSON、YAML、伪代码格式组织内容。需要分点时请直接使用中文序号或短句。默认把回复控制在 3 到 5 句、150 字以内。除非用户明确要求，否则不要贴长链接、代码示例或大段引用。";
+const WECHAT_MAX_HISTORY_ROUNDS = 2;
+const DEFAULT_WECHAT_OPENAI_MAX_TOKENS = 220;
 
 // 内存历史缓存（比 D1 快，不阻塞响应）
 const memoryHistory = new Map();
 
+function getOpenAIConfig(channel = 'default') {
+  if (channel === 'wechat') {
+    return {
+      apiKey: process.env.WECHAT_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+      baseURL: process.env.WECHAT_OPENAI_API_BASE_URL || process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
+      model: process.env.WECHAT_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-3.5-turbo",
+    };
+  }
+
+  return {
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
+    model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
+  };
+}
+
+function getGeminiModelName(channel = 'default') {
+  if (channel === 'wechat') {
+    return process.env.WECHAT_GEMINI_MODEL_NAME || process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+  }
+
+  return process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+}
+
 /**
  * 使用原生 fetch 调用 OpenAI API（兼容 OpenRouter 等）
  */
-async function callOpenAI(messages) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const baseURL = process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.OPENAI_MODEL || "gpt-3.5-turbo";
+async function callOpenAI(messages, channel = 'default') {
+  const { apiKey, baseURL, model } = getOpenAIConfig(channel);
+  const maxTokens = channel === 'wechat'
+    ? Number(process.env.WECHAT_OPENAI_MAX_TOKENS || DEFAULT_WECHAT_OPENAI_MAX_TOKENS)
+    : undefined;
+
+  const body = {
+    model: model,
+    messages: messages,
+  };
+
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    body.max_tokens = Math.floor(maxTokens);
+  }
 
   const response = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',
@@ -42,10 +78,7 @@ async function callOpenAI(messages) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -92,6 +125,18 @@ function buildSystemInstruction(channel = 'default') {
   return fixedRoleInstruction;
 }
 
+function trimHistoryForChannel(history, channel = 'default') {
+  if (!Array.isArray(history)) {
+    return [];
+  }
+
+  if (channel === 'wechat') {
+    return history.slice(-WECHAT_MAX_HISTORY_ROUNDS * 2);
+  }
+
+  return history;
+}
+
 /**
  * OpenAI 聊天接口
  * @param {string} prompt - 用户消息
@@ -120,13 +165,15 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, 
       needKVWrite = true;  // 内存 miss 了，之后需要写 KV
     }
 
+    const trimmedHistory = trimHistoryForChannel(history, channel);
+
     const messages = [
       { role: "system", content: buildSystemInstruction(channel) },
-      ...history,
+      ...trimmedHistory,
       { role: "user", content: prompt }
     ];
 
-    const assistantMessage = await callOpenAI(messages);
+    const assistantMessage = await callOpenAI(messages, channel);
 
     // 更新历史（保留最近4轮）
     const newHistory = [
@@ -155,8 +202,17 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, 
 const getGeminiModel = async () => {
   const GoogleAIClass = await loadGoogleAI();
   const genAI = new GoogleAIClass(process.env.GEMINI_API_KEY);
-  const geminiModelName = process.env.GEMINI_MODEL_NAME || "gemini-2.0-flash-lite";
+  const geminiModelName = getGeminiModelName();
   return genAI.getGenerativeModel({ model: geminiModelName }, { apiVersion: 'v1' });
+};
+
+const getChannelGeminiModel = async (channel = 'default') => {
+  const GoogleAIClass = await loadGoogleAI();
+  const apiKey = channel === 'wechat'
+    ? process.env.WECHAT_GEMINI_API_KEY || process.env.GEMINI_API_KEY
+    : process.env.GEMINI_API_KEY;
+  const genAI = new GoogleAIClass(apiKey);
+  return genAI.getGenerativeModel({ model: getGeminiModelName(channel) }, { apiVersion: 'v1' });
 };
 
 /**
@@ -189,10 +245,11 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
       needKVWrite = true;
     }
 
+    const trimmedHistory = trimHistoryForChannel(history, channel);
     let contextString = buildSystemInstruction(channel) + "\n\n";
 
     // 格式化历史对话
-    for (const msg of history) {
+    for (const msg of trimmedHistory) {
       if (msg && typeof msg.role === 'string' && typeof msg.content === 'string') {
         contextString += `${msg.content}\n`;
       }
@@ -200,7 +257,7 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
 
     contextString += prompt;
 
-    const geminiModel = await getGeminiModel();
+    const geminiModel = channel === 'wechat' ? await getChannelGeminiModel(channel) : await getGeminiModel();
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
