@@ -67,6 +67,7 @@
 | `GPT_MODEL` | 默认 AI 服务 | 默认 `openai`，可选 `gemini` |
 | `GPT_PRE_PROMPT` | AI 角色设定 | 可选 |
 | `WECHAT_PRE_PROMPT` | 微信渠道专用提示词 | 可选，默认更偏纯文本、短回复、禁 Markdown |
+| `WECHAT_REPLY_TIMEOUT_MS` | 微信被动回复超时阈值 | 可选，默认 `4500` 毫秒 |
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
 
 ### 步骤五：绑定 KV 命名空间（可选）
@@ -157,6 +158,7 @@ id = "你的 KV namespace ID"
 - 微信渠道默认会额外要求模型输出纯文本，避免 Markdown、代码块、表格、HTML、LaTeX 等不适合公众号文本消息的格式
 - 微信出口会再做一次文本清洗，兜底移除残留的 Markdown / HTML / LaTeX 标记
 - 如需自定义微信回复风格，可设置 `WECHAT_PRE_PROMPT`
+- 微信被动回复默认会在 4.5 秒内超时降级，避免超过公众号 5 秒限制导致整条消息无回复
 
 ### 文件结构
 

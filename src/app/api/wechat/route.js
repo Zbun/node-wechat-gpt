@@ -9,6 +9,56 @@ let getCloudflareContext;
 // 消息去重缓存（防止微信重试导致重复处理）
 const processedMessages = new Map();
 const MESSAGE_CACHE_TTL = 60000; // 1分钟
+const DEFAULT_WECHAT_REPLY_TIMEOUT_MS = 4500;
+
+function getWechatReplyTimeoutMs() {
+  const rawValue = Number(process.env.WECHAT_REPLY_TIMEOUT_MS || DEFAULT_WECHAT_REPLY_TIMEOUT_MS);
+
+  if (!Number.isFinite(rawValue)) {
+    return DEFAULT_WECHAT_REPLY_TIMEOUT_MS;
+  }
+
+  return Math.min(Math.max(Math.floor(rawValue), 1000), 4800);
+}
+
+function cleanupProcessedMessages(now) {
+  for (const [id, value] of processedMessages.entries()) {
+    if (now - value.time > MESSAGE_CACHE_TTL) {
+      processedMessages.delete(id);
+    }
+  }
+}
+
+function buildWechatTextResponse(fromUser, toUser, createTime, content) {
+  return `
+                  <xml>
+                      <ToUserName><![CDATA[${fromUser}]]></ToUserName>
+                      <FromUserName><![CDATA[${toUser}]]></FromUserName>
+                      <CreateTime>${createTime}</CreateTime>
+                      <MsgType><![CDATA[text]]></MsgType>
+                      <Content><![CDATA[${content}]]></Content>
+                  </xml>
+              `;
+}
+
+async function withWechatTimeout(promise, timeoutMs) {
+  let timer;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('WECHAT_REPLY_TIMEOUT'));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 function stripMarkdownForWechat(text) {
   if (typeof text !== 'string' || !text) {
@@ -126,21 +176,16 @@ export async function POST(request) {
     const toUser = message.ToUserName;
     const msgId = message.MsgId;
     const createTime = Date.now();
+    const wechatReplyTimeoutMs = getWechatReplyTimeoutMs();
+
+    cleanupProcessedMessages(createTime);
 
     // 消息去重：检查是否已处理过（微信会重试）
-    if (msgId && processedMessages.has(msgId)) {
-      console.log(`重复消息 ${msgId}，跳过处理`);
-      return new Response('', { status: 200 });
-    }
-
-    // 标记消息为已处理
     if (msgId) {
-      processedMessages.set(msgId, createTime);
-      // 清理过期缓存
-      for (const [id, time] of processedMessages.entries()) {
-        if (createTime - time > MESSAGE_CACHE_TTL) {
-          processedMessages.delete(id);
-        }
+      const cachedResponse = processedMessages.get(msgId);
+      if (cachedResponse?.responseXml) {
+        console.log(`重复消息 ${msgId}，返回缓存回复`);
+        return new Response(cachedResponse.responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
       }
     }
 
@@ -148,23 +193,29 @@ export async function POST(request) {
       case 'text': {
         const userMessage = message.Content;
         let gptResponse;
+        const requestStartTime = Date.now();
         try {
-          switch (gptModelPreference.toLowerCase()) {
-            case 'openai':
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
-              break;
-            case 'gemini':
-              gptResponse = await getGeminiChatCompletion(userMessage, fromUser, cfContext, 0, 'wechat');
-              break;
-            default:
-              console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
-              break;
-          }
+          gptResponse = await withWechatTimeout((async () => {
+            switch (gptModelPreference.toLowerCase()) {
+              case 'openai':
+                return getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
+              case 'gemini':
+                return getGeminiChatCompletion(userMessage, fromUser, cfContext, 0, 'wechat');
+              default:
+                console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
+                return getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
+            }
+          })(), wechatReplyTimeoutMs);
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
-          gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
+          if (error?.message === 'WECHAT_REPLY_TIMEOUT') {
+            gptResponse = '当前消息较多，处理超时。请稍后重试，或把问题描述得更短一些。';
+          } else {
+            gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
+          }
         }
+
+        console.log(`微信消息处理耗时 ${Date.now() - requestStartTime}ms，模型=${gptModelPreference}`);
 
         gptResponse = stripMarkdownForWechat(gptResponse);
 
@@ -174,30 +225,20 @@ export async function POST(request) {
           gptResponse = gptResponse.substring(0, MAX_MSG_LENGTH - 3) + '...';
         }
 
-        const responseXml = `
-                  <xml>
-                      <ToUserName><![CDATA[${fromUser}]]></ToUserName>
-                      <FromUserName><![CDATA[${toUser}]]></FromUserName>
-                      <CreateTime>${createTime}</CreateTime>
-                      <MsgType><![CDATA[text]]></MsgType>
-                      <Content><![CDATA[${gptResponse}]]></Content>
-                  </xml>
-              `;
+        const responseXml = buildWechatTextResponse(fromUser, toUser, createTime, gptResponse);
+        if (msgId) {
+          processedMessages.set(msgId, { time: createTime, responseXml });
+        }
         return new Response(responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
       }
       case 'event': {
         const eventType = message.Event;
         if (eventType === 'subscribe') {
           const welcomeMessage = process.env.WELCOME_MESSAGE || "感谢您的关注！我是您的AI助手，可以为您解答任何问题。";
-          const responseXml = `
-                      <xml>
-                          <ToUserName><![CDATA[${fromUser}]]></ToUserName>
-                          <FromUserName><![CDATA[${toUser}]]></FromUserName>
-                          <CreateTime>${createTime}</CreateTime>
-                          <MsgType><![CDATA[text]]></MsgType>
-                          <Content><![CDATA[${welcomeMessage}]]></Content>
-                      </xml>
-                  `;
+          const responseXml = buildWechatTextResponse(fromUser, toUser, createTime, welcomeMessage);
+          if (msgId) {
+            processedMessages.set(msgId, { time: createTime, responseXml });
+          }
           return new Response(responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
         } else if (eventType === 'unsubscribe') {
           return new Response(null, { status: 200 });
