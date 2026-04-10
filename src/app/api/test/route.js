@@ -1,13 +1,16 @@
 // src/app/api/test/route.js
 // 测试路由，用于验证 Cloudflare Pages Functions 是否正常工作
+const WECHAT_DEBUG_STATE_KEY = '__wechat_async_debug_state__';
 
 export async function GET(request) {
   const wechatEffectiveModel = process.env.WECHAT_GPT_MODEL || process.env.GPT_MODEL || 'openai';
+  const wechatAsyncDebugState = globalThis[WECHAT_DEBUG_STATE_KEY]?.lastAsyncStatus || null;
 
   return new Response(JSON.stringify({
     status: 'ok',
     message: 'Cloudflare Pages Functions is working!',
     timestamp: new Date().toISOString(),
+    wechatAsyncDebugState,
     env: {
       hasWechatToken: !!process.env.WECHAT_TOKEN,
       hasWechatAppId: !!process.env.WECHAT_APPID,

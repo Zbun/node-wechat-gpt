@@ -11,12 +11,31 @@ const processedMessages = new Map();
 const MESSAGE_CACHE_TTL = 60000; // 1分钟
 const MAX_WECHAT_TEXT_LENGTH = 2000;
 const DEFAULT_WECHAT_SYNC_REPLY_TIMEOUT_MS = 3500;
+const WECHAT_DEBUG_STATE_KEY = '__wechat_async_debug_state__';
 
 const wechatAccessTokenCache = {
   token: '',
   expiresAt: 0,
   pendingPromise: null,
 };
+
+function getWechatDebugStateStore() {
+  if (!globalThis[WECHAT_DEBUG_STATE_KEY]) {
+    globalThis[WECHAT_DEBUG_STATE_KEY] = {
+      lastAsyncStatus: null,
+    };
+  }
+
+  return globalThis[WECHAT_DEBUG_STATE_KEY];
+}
+
+function updateWechatAsyncDebugStatus(status) {
+  const store = getWechatDebugStateStore();
+  store.lastAsyncStatus = {
+    ...status,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 function cleanupProcessedMessages(now) {
   for (const [id, value] of processedMessages.entries()) {
@@ -172,6 +191,11 @@ async function getWechatAccessToken() {
       const data = await response.json();
 
       if (!response.ok || typeof data?.access_token !== 'string' || !data.access_token) {
+        updateWechatAsyncDebugStatus({
+          stage: 'get_access_token',
+          success: false,
+          error: data?.errmsg || response.statusText || '未知错误',
+        });
         throw new Error(`获取 access_token 失败: ${data?.errmsg || response.statusText || '未知错误'}`);
       }
 
@@ -182,6 +206,10 @@ async function getWechatAccessToken() {
 
       wechatAccessTokenCache.token = data.access_token;
       wechatAccessTokenCache.expiresAt = Date.now() + safeExpiresInMs;
+      updateWechatAsyncDebugStatus({
+        stage: 'get_access_token',
+        success: true,
+      });
       return data.access_token;
     } finally {
       wechatAccessTokenCache.pendingPromise = null;
@@ -218,8 +246,19 @@ async function sendWechatCustomerServiceMessage(openId, content) {
 
   const data = await response.json();
   if (!response.ok || Number(data?.errcode || 0) !== 0) {
+    updateWechatAsyncDebugStatus({
+      stage: 'send_customer_service_message',
+      success: false,
+      error: data?.errmsg || response.statusText || '未知错误',
+      errcode: Number(data?.errcode || 0),
+    });
     throw new Error(`发送客服消息失败: ${data?.errmsg || response.statusText || '未知错误'}`);
   }
+
+  updateWechatAsyncDebugStatus({
+    stage: 'send_customer_service_message',
+    success: true,
+  });
 }
 
 async function generateWechatReply(userMessage, fromUser, cfContext, gptModelPreference) {
@@ -238,7 +277,26 @@ async function generateWechatReply(userMessage, fromUser, cfContext, gptModelPre
       break;
   }
 
-  return truncateWechatText(stripMarkdownForWechat(gptResponse));
+  const normalizedReply = truncateWechatText(stripMarkdownForWechat(gptResponse));
+  if (normalizedReply) {
+    return normalizedReply;
+  }
+
+  const rawReply = typeof gptResponse === 'string' ? gptResponse.trim() : '';
+  if (rawReply) {
+    console.warn('Wechat reply became empty after normalization, falling back to raw reply', {
+      fromUser,
+      model: gptModelPreference,
+      rawLength: rawReply.length,
+    });
+    return truncateWechatText(rawReply);
+  }
+
+  console.warn('Wechat reply is empty from upstream, using fallback message', {
+    fromUser,
+    model: gptModelPreference,
+  });
+  return '抱歉，这次没有生成有效回复，请换个说法再试一次。';
 }
 
 // 使用 Web Crypto API 验证微信公众号请求签名
@@ -340,6 +398,11 @@ export async function POST(request) {
             fromUser,
             msgId: msgId || null,
           });
+          updateWechatAsyncDebugStatus({
+            stage: 'validate_credentials',
+            success: false,
+            error: '缺少 WECHAT_APPID 或 WECHAT_SECRET',
+          });
           responseXml = buildWechatTextResponse(
             fromUser,
             toUser,
@@ -349,6 +412,12 @@ export async function POST(request) {
         } else {
           const asyncTask = generateWechatReply(userMessage, fromUser, cfContext, gptModelPreference)
             .then(async (replyText) => {
+              updateWechatAsyncDebugStatus({
+                stage: 'generate_reply',
+                success: true,
+                fromUser,
+                msgId: msgId || null,
+              });
               await sendWechatCustomerServiceMessage(fromUser, replyText);
               console.log('Wechat async customer service reply sent', {
                 fromUser,
@@ -358,6 +427,13 @@ export async function POST(request) {
               });
             })
             .catch((error) => {
+              updateWechatAsyncDebugStatus({
+                stage: 'async_reply',
+                success: false,
+                fromUser,
+                msgId: msgId || null,
+                error: error?.message || String(error),
+              });
               console.error('Wechat async reply failed', {
                 fromUser,
                 msgId: msgId || null,
@@ -373,6 +449,13 @@ export async function POST(request) {
           }
 
           console.log('Wechat reply switched to async mode', {
+            fromUser,
+            msgId: msgId || null,
+            model: gptModelPreference,
+          });
+          updateWechatAsyncDebugStatus({
+            stage: 'async_queued',
+            success: true,
             fromUser,
             msgId: msgId || null,
             model: gptModelPreference,
