@@ -62,6 +62,18 @@ function getGeminiApiKey(channel = 'default') {
   return process.env.GEMINI_API_KEY;
 }
 
+function getSafeBaseUrlHost(baseURL) {
+  if (typeof baseURL !== 'string' || !baseURL) {
+    return 'not-set';
+  }
+
+  try {
+    return new URL(baseURL).host || 'invalid-url';
+  } catch {
+    return 'invalid-url';
+  }
+}
+
 /**
  * 使用原生 fetch 调用 OpenAI API（兼容 OpenRouter 等）
  */
@@ -70,6 +82,7 @@ async function callOpenAI(messages, channel = 'default') {
   const maxTokens = channel === 'wechat'
     ? Number(process.env.WECHAT_OPENAI_MAX_TOKENS || DEFAULT_WECHAT_OPENAI_MAX_TOKENS)
     : undefined;
+  const requestStartTime = Date.now();
 
   const body = {
     model: model,
@@ -91,10 +104,24 @@ async function callOpenAI(messages, channel = 'default') {
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error('OpenAI upstream request failed', {
+      channel,
+      model,
+      baseUrlHost: getSafeBaseUrlHost(baseURL),
+      durationMs: Date.now() - requestStartTime,
+      status: response.status,
+    });
     throw new Error(`API请求失败 (${response.status}): ${errorText}`);
   }
 
   const data = await response.json();
+  console.log('OpenAI upstream request completed', {
+    channel,
+    model,
+    baseUrlHost: getSafeBaseUrlHost(baseURL),
+    durationMs: Date.now() - requestStartTime,
+    maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : null,
+  });
   return data.choices[0].message.content;
 }
 
@@ -265,9 +292,17 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
     contextString += prompt;
 
     const geminiModel = await getGeminiModel(channel);
+    const requestStartTime = Date.now();
     const result = await geminiModel.generateContent(contextString);
     const response = await result.response;
     let text = response?.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，Gemini 没有给出回复。";
+
+    console.log('Gemini upstream request completed', {
+      channel,
+      model: getGeminiModelName(channel),
+      durationMs: Date.now() - requestStartTime,
+      retryCount,
+    });
 
     // 移除可能的 AI 前缀
     if (text.match(/^(AI[:：]|Assistant[:：]|机器人[:：])/i)) {

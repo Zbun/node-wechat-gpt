@@ -113,6 +113,20 @@ function getWechatModelPreference() {
   return process.env.WECHAT_GPT_MODEL || process.env.GPT_MODEL || 'openai';
 }
 
+function getWechatDebugConfig() {
+  const modelPreference = getWechatModelPreference();
+
+  return {
+    modelPreference,
+    timeoutMs: getWechatReplyTimeoutMs(),
+    wechatUseKvHistory: process.env.WECHAT_USE_KV_HISTORY === 'true',
+    openaiModel: process.env.WECHAT_OPENAI_MODEL || process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+    geminiModel: process.env.WECHAT_GEMINI_MODEL_NAME || process.env.GEMINI_MODEL_NAME || 'gemini-2.0-flash-lite',
+    hasOpenAIKey: Boolean(process.env.WECHAT_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
+    hasGeminiKey: Boolean(process.env.WECHAT_GEMINI_API_KEY || process.env.GEMINI_API_KEY),
+  };
+}
+
 // 使用 Web Crypto API 验证微信公众号请求签名
 async function verifySignature(signature, timestamp, nonce) {
   const token = wechatToken;
@@ -181,8 +195,16 @@ export async function POST(request) {
     const createTime = Date.now();
     const wechatReplyTimeoutMs = getWechatReplyTimeoutMs();
     const gptModelPreference = getWechatModelPreference();
+    const wechatDebugConfig = getWechatDebugConfig();
 
     cleanupProcessedMessages(createTime);
+
+    console.log('Wechat request received', {
+      fromUser,
+      msgType,
+      hasMsgId: Boolean(msgId),
+      ...wechatDebugConfig,
+    });
 
     // 消息去重：检查是否已处理过（微信会重试）
     if (msgId) {
@@ -213,6 +235,11 @@ export async function POST(request) {
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
           if (error?.message === 'WECHAT_REPLY_TIMEOUT') {
+            console.error('Wechat reply timeout fallback triggered', {
+              fromUser,
+              msgId: msgId || null,
+              ...wechatDebugConfig,
+            });
             gptResponse = '当前消息较多，处理超时。请稍后重试，或把问题描述得更短一些。';
           } else {
             gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
