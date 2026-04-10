@@ -16,16 +16,11 @@ const MAX_MEMORY_HISTORY = 4;
 const MEMORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const CHAT_HISTORY_TTL_SECONDS = 600;
 const DEFAULT_WECHAT_OPENAI_MAX_TOKENS = 220;
-const WECHAT_DEBUG_STATE_KEY = '__wechat_async_debug_state__';
+const DEFAULT_WECHAT_REPLY_TIMEOUT_MS = 4500;
+const WECHAT_DEBUG_STATE_KEY = '__wechat_sync_debug_state__';
 
 const processedMessages = new Map();
 const memoryHistory = new Map();
-
-const wechatAccessTokenCache = {
-  token: '',
-  expiresAt: 0,
-  pendingPromise: null,
-};
 
 const defaultWechatInstruction = '当前输出渠道是微信公众号文本消息。请优先直接回答结论，表达尽量简短，避免冗长开场白。只返回适合微信文本消息的纯文本内容。不要使用 Markdown、代码块、标题、表格、HTML、XML、LaTeX、无序列表、有序列表、加粗、斜体、链接标记，也不要输出反引号。不要用 JSON、YAML、伪代码格式组织内容。需要分点时请直接使用中文序号或短句。默认把回复控制在 3 到 5 句、150 字以内。除非用户明确要求，否则不要贴长链接、代码示例或大段引用。';
 
@@ -53,6 +48,15 @@ function updateWechatAsyncDebugStatus(status) {
     ...status,
     timestamp: new Date().toISOString(),
   };
+}
+
+function getWechatReplyTimeoutMs(env) {
+  const rawValue = Number(readEnv(env, 'WECHAT_REPLY_TIMEOUT_MS') || DEFAULT_WECHAT_REPLY_TIMEOUT_MS);
+  if (!Number.isFinite(rawValue)) {
+    return DEFAULT_WECHAT_REPLY_TIMEOUT_MS;
+  }
+
+  return Math.min(Math.max(Math.floor(rawValue), 1000), 4800);
 }
 
 function cleanupProcessedMessages(now) {
@@ -400,78 +404,20 @@ async function generateAIReply(env, userMessage, userId, channel = 'wechat') {
   return finalReply;
 }
 
-function getWechatAppCredentials(env) {
-  return {
-    appId: readEnv(env, 'WECHAT_APPID'),
-    appSecret: readEnv(env, 'WECHAT_SECRET'),
-  };
-}
+async function withWechatTimeout(promise, timeoutMs) {
+  let timer;
 
-async function getWechatAccessToken(env) {
-  const now = Date.now();
-  if (wechatAccessTokenCache.token && wechatAccessTokenCache.expiresAt > now) {
-    return wechatAccessTokenCache.token;
-  }
-
-  if (wechatAccessTokenCache.pendingPromise) {
-    return wechatAccessTokenCache.pendingPromise;
-  }
-
-  const { appId, appSecret } = getWechatAppCredentials(env);
-  if (!appId || !appSecret) {
-    throw new Error('缺少 WECHAT_APPID 或 WECHAT_SECRET');
-  }
-
-  wechatAccessTokenCache.pendingPromise = (async () => {
-    try {
-      const tokenUrl = new URL('https://api.weixin.qq.com/cgi-bin/token');
-      tokenUrl.searchParams.set('grant_type', 'client_credential');
-      tokenUrl.searchParams.set('appid', appId);
-      tokenUrl.searchParams.set('secret', appSecret);
-
-      const response = await fetch(tokenUrl.toString());
-      const data = await response.json();
-
-      if (!response.ok || typeof data?.access_token !== 'string' || !data.access_token) {
-        throw new Error(`获取 access_token 失败: ${data?.errmsg || response.statusText || '未知错误'}`);
-      }
-
-      const expiresInSeconds = Number(data.expires_in);
-      const safeExpiresInMs = Number.isFinite(expiresInSeconds) && expiresInSeconds > 300
-        ? (expiresInSeconds - 300) * 1000
-        : 60 * 60 * 1000;
-
-      wechatAccessTokenCache.token = data.access_token;
-      wechatAccessTokenCache.expiresAt = Date.now() + safeExpiresInMs;
-      return data.access_token;
-    } finally {
-      wechatAccessTokenCache.pendingPromise = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('WECHAT_REPLY_TIMEOUT')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
     }
-  })();
-
-  return wechatAccessTokenCache.pendingPromise;
-}
-
-async function sendWechatCustomerServiceMessage(env, openId, content) {
-  const normalizedContent = truncateWechatText(stripMarkdownForWechat(content));
-  if (!normalizedContent) {
-    throw new Error('客服消息内容为空');
-  }
-
-  const accessToken = await getWechatAccessToken(env);
-  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${encodeURIComponent(accessToken)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      touser: openId,
-      msgtype: 'text',
-      text: { content: normalizedContent },
-    }),
-  });
-
-  const data = await response.json();
-  if (!response.ok || Number(data?.errcode || 0) !== 0) {
-    throw new Error(`发送客服消息失败: ${data?.errmsg || response.statusText || '未知错误'}`);
   }
 }
 
@@ -505,48 +451,6 @@ function buildTestResponse(env) {
       geminiModel: getGeminiConfig(env, 'wechat').model,
     },
   };
-}
-
-async function handleAsyncWechatReply(env, payload) {
-  const { fromUser, userMessage, msgId } = payload;
-  try {
-    updateWechatAsyncDebugStatus({
-      stage: 'async_started',
-      success: true,
-      fromUser,
-      msgId: msgId || null,
-    });
-
-    const replyText = await generateAIReply(env, userMessage, fromUser, 'wechat');
-    updateWechatAsyncDebugStatus({
-      stage: 'generate_reply',
-      success: true,
-      fromUser,
-      msgId: msgId || null,
-    });
-
-    await sendWechatCustomerServiceMessage(env, fromUser, replyText);
-    updateWechatAsyncDebugStatus({
-      stage: 'send_customer_service_message',
-      success: true,
-      fromUser,
-      msgId: msgId || null,
-    });
-    console.log('Wechat async reply sent', { fromUser, msgId: msgId || null });
-  } catch (error) {
-    updateWechatAsyncDebugStatus({
-      stage: 'async_failed',
-      success: false,
-      fromUser,
-      msgId: msgId || null,
-      error: error?.message || String(error),
-    });
-    console.error('Wechat async reply failed', {
-      fromUser,
-      msgId: msgId || null,
-      error: error?.message || String(error),
-    });
-  }
 }
 
 function parseMessage(xml) {
@@ -662,20 +566,61 @@ export default {
         });
       }
 
-      const response = new Response('success', {
+      let replyText;
+
+      try {
+        updateWechatAsyncDebugStatus({
+          stage: 'sync_started',
+          success: true,
+          fromUser,
+          msgId: msgId || null,
+        });
+
+        replyText = await withWechatTimeout(
+          generateAIReply(env, userMessage, fromUser, 'wechat'),
+          getWechatReplyTimeoutMs(env)
+        );
+
+        updateWechatAsyncDebugStatus({
+          stage: 'sync_completed',
+          success: true,
+          fromUser,
+          msgId: msgId || null,
+        });
+      } catch (error) {
+        const errorMessage = error?.message || String(error);
+        updateWechatAsyncDebugStatus({
+          stage: 'sync_failed',
+          success: false,
+          fromUser,
+          msgId: msgId || null,
+          error: errorMessage,
+        });
+        console.error('Wechat sync reply failed', {
+          fromUser,
+          msgId: msgId || null,
+          error: errorMessage,
+        });
+
+        replyText = errorMessage === 'WECHAT_REPLY_TIMEOUT'
+          ? '当前消息较多，处理超时。请稍后重试，或把问题描述得更短一些。'
+          : `抱歉，服务暂时不可用: ${errorMessage}`;
+      }
+
+      const responseXml = buildWechatTextResponse(
+        fromUser,
+        toUser,
+        createTime,
+        truncateWechatText(stripMarkdownForWechat(replyText))
+      );
+      const response = new Response(responseXml, {
         status: 200,
-        headers: { 'Content-Type': 'text/plain' },
+        headers: { 'Content-Type': 'text/xml' },
       });
 
       if (msgId) {
         processedMessages.set(msgId, { time: createTime, response: response.clone() });
       }
-
-      ctx.waitUntil(handleAsyncWechatReply(env, {
-        fromUser,
-        userMessage,
-        msgId,
-      }));
 
       return response;
     } catch (error) {
