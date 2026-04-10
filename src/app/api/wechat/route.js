@@ -146,25 +146,6 @@ function getWechatAppCredentials() {
   };
 }
 
-async function withReplyDeadline(promise, timeoutMs) {
-  let timer = null;
-
-  try {
-    return await Promise.race([
-      promise.then((value) => ({ timedOut: false, value })),
-      new Promise((resolve) => {
-        timer = setTimeout(() => {
-          resolve({ timedOut: true, value: null });
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
 async function getWechatAccessToken() {
   const now = Date.now();
   if (wechatAccessTokenCache.token && wechatAccessTokenCache.expiresAt > now) {
@@ -351,56 +332,22 @@ export async function POST(request) {
       case 'text': {
         const userMessage = message.Content;
         const requestStartTime = Date.now();
-        const replyPromise = generateWechatReply(userMessage, fromUser, cfContext, gptModelPreference);
-        let syncResult;
+        let responseXml;
+        const { appId, appSecret } = getWechatAppCredentials();
 
-        try {
-          syncResult = await withReplyDeadline(replyPromise, getWechatSyncReplyTimeoutMs());
-        } catch (error) {
-          console.error(`Error calling ${gptModelPreference} API:`, error);
-          const responseXml = buildWechatTextResponse(
+        if (!appId || !appSecret) {
+          console.error('Wechat async reply skipped due to missing app credentials', {
+            fromUser,
+            msgId: msgId || null,
+          });
+          responseXml = buildWechatTextResponse(
             fromUser,
             toUser,
             createTime,
-            truncateWechatText(`抱歉，服务暂时不可用: ${error?.message || '未知错误'}`)
+            '未配置 WECHAT_APPID/WECHAT_SECRET，暂时无法异步补发。'
           );
-          if (msgId) {
-            processedMessages.set(msgId, { time: createTime, responseXml });
-          }
-          return new Response(responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
-        }
-
-        let responseXml;
-
-        if (!syncResult.timedOut) {
-          const gptResponse = syncResult.value;
-          console.log('Wechat sync reply completed', {
-            fromUser,
-            msgId: msgId || null,
-            durationMs: Date.now() - requestStartTime,
-            model: gptModelPreference,
-          });
-          responseXml = buildWechatTextResponse(fromUser, toUser, createTime, gptResponse);
         } else {
-          const { appId, appSecret } = getWechatAppCredentials();
-          if (!appId || !appSecret) {
-            console.error('Wechat async reply skipped due to missing app credentials', {
-              fromUser,
-              msgId: msgId || null,
-            });
-            responseXml = buildWechatTextResponse(
-              fromUser,
-              toUser,
-              createTime,
-              '回复生成中，但未配置 WECHAT_APPID/WECHAT_SECRET，暂时无法异步补发。'
-            );
-            if (msgId) {
-              processedMessages.set(msgId, { time: createTime, responseXml });
-            }
-            return new Response(responseXml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
-          }
-
-          const asyncTask = replyPromise
+          const asyncTask = generateWechatReply(userMessage, fromUser, cfContext, gptModelPreference)
             .then(async (replyText) => {
               await sendWechatCustomerServiceMessage(fromUser, replyText);
               console.log('Wechat async customer service reply sent', {
@@ -428,7 +375,6 @@ export async function POST(request) {
           console.log('Wechat reply switched to async mode', {
             fromUser,
             msgId: msgId || null,
-            syncWindowMs: getWechatSyncReplyTimeoutMs(),
             model: gptModelPreference,
           });
           responseXml = buildWechatTextResponse(fromUser, toUser, createTime, getWechatAsyncAckMessage());
