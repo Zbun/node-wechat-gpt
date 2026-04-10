@@ -28,6 +28,8 @@
 ### 步骤二：创建 KV 命名空间（可选，推荐）
 
 > **说明**：KV 用于在不同实例间同步对话历史。不配置时仅使用内存缓存。
+>
+> **当前代码实际配置**：只需要创建 **1 个** KV 命名空间，绑定变量名固定为 `CHAT_HISTORY`。
 
 1. 进入 **Workers & Pages** > **KV**
 2. 点击 **Create a namespace**
@@ -67,6 +69,20 @@
 | `WELCOME_MESSAGE` | 新用户关注欢迎语 | 可选 |
 
 ### 步骤五：绑定 KV 命名空间（可选）
+
+当前项目只使用 **1 个** KV 绑定：
+
+| 绑定变量名 | 数量 | 用途 |
+|------------|------|------|
+| `CHAT_HISTORY` | 1 个 | 存储每个用户的对话历史 |
+
+如果你使用 `wrangler deploy` 部署，也可以直接在 [wrangler.toml](wrangler.toml) 中填写：
+
+```toml
+[[kv_namespaces]]
+binding = "CHAT_HISTORY"
+id = "你的 KV namespace ID"
+```
 
 1. 部署完成后，进入项目 **Settings** > **Bindings** > **KV namespace bindings**
 2. 点击 **Add binding**：
@@ -108,7 +124,7 @@
 - 考虑使用更快的模型（如 `gemini-2.0-flash-lite`）
 
 **部署失败**
-- 确认 `NODE_VERSION` 环境变量设置为 `20`
+- 确认 `NODE_VERSION` 环境变量设置为 `24`
 - 查看构建日志排查具体错误
 
 ## 技术说明
@@ -119,7 +135,10 @@
 - **内存优先**：同一实例内快速读取，不阻塞响应
 - **KV 备份**：内存 miss 时从 KV 读取，实例间同步
 - **智能写入**：只在内存 miss 时写 KV，减少写入次数
-- 每用户保留最近2轮对话，10分钟后自动清除
+- **KV 变量名**：`CHAT_HISTORY`
+- **KV 命名空间数量**：1 个
+- **KV Key 规则**：OpenAI 使用 `userId`，Gemini 使用 `userId_gemini`
+- 每个 Key 保留最近4轮对话（共 8 条消息），10分钟后自动清除
 
 ### 文件结构
 

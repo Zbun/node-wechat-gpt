@@ -15,7 +15,9 @@ binding = "ASSETS"
 binding = "WORKER_SELF_REFERENCE"
 service = "node-wechat-gpt"
 
-# KV 命名空间配置（在 Dashboard 中创建并绑定）
-# [[kv_namespaces]]
-# binding = "CHAT_HISTORY"
-# id = "your-kv-namespace-id"
+# KV 命名空间配置
+# 在 Cloudflare Dashboard 中先创建 1 个 KV namespace，名称可用 wechat-gpt-history
+# 然后把下面的 id 替换成实际的 namespace ID
+[[kv_namespaces]]
+binding = "CHAT_HISTORY"
+id = "your-kv-namespace-id"
