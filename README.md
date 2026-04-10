@@ -169,13 +169,13 @@ database_id = "你的 D1 database_id"
 
 - Pages 这边只能作为 **Queue producer**
 - Queue consumer 必须是一个 **独立的 Worker**
-- 仓库里已提供独立消费者入口 [wechat-queue-consumer.mjs](wechat-queue-consumer.mjs) 和配置 [wrangler.queue-consumer.toml](wrangler.queue-consumer.toml)
+- 仓库里已提供适合 Cloudflare 后台导入仓库的独立消费者目录 [queue-consumer](queue-consumer)
 
 推荐部署方式：
 
 1. 保持当前 Pages 项目继续提供网站和 `/api/wechat`
 2. 在 Cloudflare 另建一个 Worker：`node-wechat-gpt-queue-consumer`
-3. 使用 `wrangler.queue-consumer.toml` 部署它
+3. 选择同一个仓库，**根目录改为 `queue-consumer`**
 4. 给 Pages 项目绑定 Queue producer：`WECHAT_REPLY_QUEUE`
 5. 给独立 Worker 绑定同一个 Queue consumer：`wechat-reply-queue`
 6. 把 `WECHAT_APPID`、`WECHAT_SECRET`、模型相关变量也配置到这个独立 Worker 上

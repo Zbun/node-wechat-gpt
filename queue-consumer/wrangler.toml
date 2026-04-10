@@ -1,29 +1,10 @@
 name = "node-wechat-gpt-queue-consumer"
-main = "wechat-queue-consumer.mjs"
+main = "index.mjs"
 compatibility_date = "2026-04-09"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [[queues.consumers]]
 queue = "wechat-reply-queue"
-
-# 复制公众号与模型相关环境变量到这个 Worker：
-# WECHAT_APPID
-# WECHAT_SECRET
-# OPENAI_API_KEY
-# OPENAI_API_BASE_URL
-# OPENAI_MODEL
-# GPT_MODEL
-# GEMINI_API_KEY
-# GEMINI_MODEL_NAME
-# WECHAT_GPT_MODEL
-# WECHAT_OPENAI_API_KEY
-# WECHAT_OPENAI_API_BASE_URL
-# WECHAT_OPENAI_MODEL
-# WECHAT_GEMINI_API_KEY
-# WECHAT_GEMINI_MODEL_NAME
-# GPT_PRE_PROMPT
-# WECHAT_PRE_PROMPT
-# WECHAT_OPENAI_MAX_TOKENS
 
 # 如需持久化上下文，可继续绑定：
 # [[d1_databases]]
