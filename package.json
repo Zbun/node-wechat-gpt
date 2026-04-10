@@ -8,22 +8,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "node -e \"console.log('No build step required for pure worker.')\"",
-    "start": "wrangler dev",
-    "preview": "wrangler dev",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
     "fast-xml-parser": "^4.5.6",
-    "next": "^15.5.15",
-    "openai": "^4.87.3",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "openai": "^4.87.3"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "^1.18.1",
-    "@tailwindcss/postcss": "^4.2.2",
-    "tailwindcss": "^4.2.2",
     "wrangler": "^4.81.0"
   }
 }
