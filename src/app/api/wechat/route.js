@@ -9,17 +9,6 @@ let getCloudflareContext;
 // 消息去重缓存（防止微信重试导致重复处理）
 const processedMessages = new Map();
 const MESSAGE_CACHE_TTL = 60000; // 1分钟
-const DEFAULT_WECHAT_REPLY_TIMEOUT_MS = 4500;
-
-function getWechatReplyTimeoutMs() {
-  const rawValue = Number(process.env.WECHAT_REPLY_TIMEOUT_MS || DEFAULT_WECHAT_REPLY_TIMEOUT_MS);
-
-  if (!Number.isFinite(rawValue)) {
-    return DEFAULT_WECHAT_REPLY_TIMEOUT_MS;
-  }
-
-  return Math.min(Math.max(Math.floor(rawValue), 1000), 4800);
-}
 
 function cleanupProcessedMessages(now) {
   for (const [id, value] of processedMessages.entries()) {
@@ -39,25 +28,6 @@ function buildWechatTextResponse(fromUser, toUser, createTime, content) {
                       <Content><![CDATA[${content}]]></Content>
                   </xml>
               `;
-}
-
-async function withWechatTimeout(promise, timeoutMs) {
-  let timer;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error('WECHAT_REPLY_TIMEOUT'));
-        }, timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
 }
 
 function stripMarkdownForWechat(text) {
@@ -118,7 +88,6 @@ function getWechatDebugConfig() {
 
   return {
     modelPreference,
-    timeoutMs: getWechatReplyTimeoutMs(),
     wechatUseKvHistory: process.env.WECHAT_USE_KV_HISTORY === 'true',
     openaiModel: process.env.WECHAT_OPENAI_MODEL || process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
     geminiModel: process.env.WECHAT_GEMINI_MODEL_NAME || process.env.GEMINI_MODEL_NAME || 'gemini-2.0-flash-lite',
@@ -193,7 +162,6 @@ export async function POST(request) {
     const toUser = message.ToUserName;
     const msgId = message.MsgId;
     const createTime = Date.now();
-    const wechatReplyTimeoutMs = getWechatReplyTimeoutMs();
     const gptModelPreference = getWechatModelPreference();
     const wechatDebugConfig = getWechatDebugConfig();
 
@@ -221,29 +189,21 @@ export async function POST(request) {
         let gptResponse;
         const requestStartTime = Date.now();
         try {
-          gptResponse = await withWechatTimeout((async () => {
-            switch (gptModelPreference.toLowerCase()) {
-              case 'openai':
-                return getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
-              case 'gemini':
-                return getGeminiChatCompletion(userMessage, fromUser, cfContext, 0, 'wechat');
-              default:
-                console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
-                return getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
-            }
-          })(), wechatReplyTimeoutMs);
+          switch (gptModelPreference.toLowerCase()) {
+            case 'openai':
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
+              break;
+            case 'gemini':
+              gptResponse = await getGeminiChatCompletion(userMessage, fromUser, cfContext, 0, 'wechat');
+              break;
+            default:
+              console.warn(`Unknown GPT model preference: ${gptModelPreference}, using OpenAI as default.`);
+              gptResponse = await getOpenAIChatCompletion(userMessage, fromUser, cfContext, 'wechat');
+              break;
+          }
         } catch (error) {
           console.error(`Error calling ${gptModelPreference} API:`, error);
-          if (error?.message === 'WECHAT_REPLY_TIMEOUT') {
-            console.error('Wechat reply timeout fallback triggered', {
-              fromUser,
-              msgId: msgId || null,
-              ...wechatDebugConfig,
-            });
-            gptResponse = '当前消息较多，处理超时。请稍后重试，或把问题描述得更短一些。';
-          } else {
-            gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
-          }
+          gptResponse = `抱歉，服务暂时不可用: ${error?.message || '未知错误'}`;
         }
 
         console.log(`微信消息处理耗时 ${Date.now() - requestStartTime}ms，模型=${gptModelPreference}`);
