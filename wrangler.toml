@@ -14,8 +14,14 @@ binding = "ASSETS"
 binding = "WORKER_SELF_REFERENCE"
 service = "node-wechat-gpt"
 
-# KV 可选，不在仓库里写死具体 namespace ID，避免覆盖用户线上配置或因占位符导致部署失败。
+# D1 / KV 可选，不在仓库里写死真实 ID，避免覆盖用户线上配置或因占位符导致部署失败。
+# 当前代码优先使用 D1 绑定 CHAT_HISTORY_DB，未绑定时才回退到 KV 绑定 CHAT_HISTORY。
 # 如需通过 wrangler.toml 管理，再手动添加：
+# [[d1_databases]]
+# binding = "CHAT_HISTORY_DB"
+# database_name = "wechat-gpt-history"
+# database_id = "你的实际 D1 database_id"
+#
 # [[kv_namespaces]]
 # binding = "CHAT_HISTORY"
 # id = "你的实际 KV namespace ID"

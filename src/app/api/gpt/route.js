@@ -26,6 +26,7 @@ const MEMORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟过期
 const wechatChannelInstruction = process.env.WECHAT_PRE_PROMPT || "当前输出渠道是微信公众号文本消息。请优先直接回答结论，表达尽量简短，避免冗长开场白。只返回适合微信文本消息的纯文本内容。不要使用 Markdown、代码块、标题、表格、HTML、XML、LaTeX、无序列表、有序列表、加粗、斜体、链接标记，也不要输出反引号。不要用 JSON、YAML、伪代码格式组织内容。需要分点时请直接使用中文序号或短句。默认把回复控制在 3 到 5 句、150 字以内。除非用户明确要求，否则不要贴长链接、代码示例或大段引用。";
 const WECHAT_MAX_HISTORY_ROUNDS = 2;
 const DEFAULT_WECHAT_OPENAI_MAX_TOKENS = 220;
+const CHAT_HISTORY_TTL_SECONDS = 600;
 
 // 内存历史缓存（比 D1 快，不阻塞响应）
 const memoryHistory = new Map();
@@ -125,31 +126,143 @@ async function callOpenAI(messages, channel = 'default') {
   return data.choices[0].message.content;
 }
 
-/**
- * 从 KV 获取历史记录
- */
+function normalizeHistoryMessages(data) {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  return data
+    .filter((msg) => msg && typeof msg.role === 'string' && typeof msg.content === 'string')
+    .map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+}
+
 async function getHistoryFromKV(kv, userId) {
-  if (!kv) return null;
+  if (!kv) {
+    return [];
+  }
+
   try {
     const data = await kv.get(userId, { type: 'json' });
-    return data;
+    return normalizeHistoryMessages(data);
   } catch (error) {
     console.error('KV 读取失败:', error);
-    return null;
+    return [];
   }
 }
 
-/**
- * 保存历史记录到 KV（异步，不阻塞响应）
- */
 async function saveHistoryToKV(kv, userId, messages) {
-  if (!kv) return;
+  if (!kv) {
+    return;
+  }
+
   try {
     await kv.put(userId, JSON.stringify(messages), {
-      expirationTtl: 600  // 10分钟后过期
+      expirationTtl: CHAT_HISTORY_TTL_SECONDS,
     });
   } catch (error) {
     console.error('KV 写入失败:', error);
+  }
+}
+
+async function getHistoryFromD1(db, userId) {
+  if (!db) {
+    return [];
+  }
+
+  try {
+    const result = await db
+      .prepare(`
+        SELECT messages_json
+        FROM ai_chat_history
+        WHERE user_id = ?
+          AND expires_at > ?
+        LIMIT 1
+      `)
+      .bind(userId, Date.now())
+      .first();
+
+    if (!result?.messages_json || typeof result.messages_json !== 'string') {
+      return [];
+    }
+
+    return normalizeHistoryMessages(JSON.parse(result.messages_json));
+  } catch (error) {
+    console.error('D1 读取失败:', error);
+    return [];
+  }
+}
+
+async function saveHistoryToD1(db, userId, messages) {
+  if (!db) {
+    return;
+  }
+
+  try {
+    const now = Date.now();
+    const expiresAt = now + CHAT_HISTORY_TTL_SECONDS * 1000;
+
+    await db
+      .prepare(`
+        INSERT INTO ai_chat_history (user_id, messages_json, updated_at, expires_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          messages_json = excluded.messages_json,
+          updated_at = excluded.updated_at,
+          expires_at = excluded.expires_at
+      `)
+      .bind(userId, JSON.stringify(messages), now, expiresAt)
+      .run();
+  } catch (error) {
+    console.error('D1 写入失败:', error);
+  }
+}
+
+function getHistoryStorage(cfContext, channel = 'default') {
+  const d1 = cfContext?.env?.CHAT_HISTORY_DB || null;
+  const kv = cfContext?.env?.CHAT_HISTORY || null;
+
+  if (d1) {
+    return { type: 'd1', binding: d1 };
+  }
+
+  if (shouldUseKVHistory(channel) && kv) {
+    return { type: 'kv', binding: kv };
+  }
+
+  return { type: 'memory', binding: null };
+}
+
+async function loadHistory(storage, userId) {
+  if (!storage?.binding) {
+    return [];
+  }
+
+  if (storage.type === 'd1') {
+    return getHistoryFromD1(storage.binding, userId);
+  }
+
+  if (storage.type === 'kv') {
+    return getHistoryFromKV(storage.binding, userId);
+  }
+
+  return [];
+}
+
+async function persistHistory(storage, userId, messages) {
+  if (!storage?.binding) {
+    return;
+  }
+
+  if (storage.type === 'd1') {
+    await saveHistoryToD1(storage.binding, userId, messages);
+    return;
+  }
+
+  if (storage.type === 'kv') {
+    await saveHistoryToKV(storage.binding, userId, messages);
   }
 }
 
@@ -189,23 +302,16 @@ function shouldUseKVHistory(channel = 'default') {
  */
 export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, channel = 'default') {
   try {
-    const kv = shouldUseKVHistory(channel) ? cfContext?.env?.CHAT_HISTORY : null;
+    const storage = getHistoryStorage(cfContext, channel);
     let history = [];
-    let needKVWrite = false;
 
     // 1. 先查内存缓存
     const cached = memoryHistory.get(userId);
     if (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) {
       history = cached.messages;
-    } else if (kv) {
-      // 2. 内存没有，查 KV
-      const kvData = await getHistoryFromKV(kv, userId);
-      if (kvData) {
-        history = kvData;
-        // 同步到内存
-        memoryHistory.set(userId, { messages: history, time: Date.now() });
-      }
-      needKVWrite = true;  // 内存 miss 了，之后需要写 KV
+    } else if (storage.binding) {
+      history = await loadHistory(storage, userId);
+      memoryHistory.set(userId, { messages: history, time: Date.now() });
     }
 
     const trimmedHistory = trimHistoryForChannel(history, channel);
@@ -228,9 +334,10 @@ export async function getOpenAIChatCompletion(prompt, userId, cfContext = null, 
     // 更新内存缓存
     memoryHistory.set(userId, { messages: newHistory, time: Date.now() });
 
-    // 只在内存 miss 时才写 KV（减少写入次数）
-    if (needKVWrite && kv && cfContext?.ctx?.waitUntil) {
-      cfContext.ctx.waitUntil(saveHistoryToKV(kv, userId, newHistory));
+    if (storage.binding && cfContext?.ctx?.waitUntil) {
+      cfContext.ctx.waitUntil(persistHistory(storage, userId, newHistory));
+    } else if (storage.binding) {
+      await persistHistory(storage, userId, newHistory);
     }
 
     return assistantMessage;
@@ -260,23 +367,17 @@ const getGeminiModel = async (channel = 'default') => {
 export async function getGeminiChatCompletion(prompt, userId, cfContext = null, retryCount = 0, channel = 'default') {
   const MAX_RETRIES = 3;
   try {
-    const kv = shouldUseKVHistory(channel) ? cfContext?.env?.CHAT_HISTORY : null;
+    const storage = getHistoryStorage(cfContext, channel);
     const geminiUserId = userId + '_gemini';
     let history = [];
-    let needKVWrite = false;
 
     // 1. 先查内存缓存
     const cached = memoryHistory.get(geminiUserId);
     if (cached && Date.now() - cached.time < MEMORY_CACHE_TTL) {
       history = cached.messages;
-    } else if (kv) {
-      // 2. 内存没有，查 KV
-      const kvData = await getHistoryFromKV(kv, geminiUserId);
-      if (kvData) {
-        history = kvData;
-        memoryHistory.set(geminiUserId, { messages: history, time: Date.now() });
-      }
-      needKVWrite = true;
+    } else if (storage.binding) {
+      history = await loadHistory(storage, geminiUserId);
+      memoryHistory.set(geminiUserId, { messages: history, time: Date.now() });
     }
 
     const trimmedHistory = trimHistoryForChannel(history, channel);
@@ -319,9 +420,10 @@ export async function getGeminiChatCompletion(prompt, userId, cfContext = null, 
     // 更新内存缓存
     memoryHistory.set(geminiUserId, { messages: newHistory, time: Date.now() });
 
-    // 只在内存 miss 时才写 KV
-    if (needKVWrite && kv && cfContext?.ctx?.waitUntil) {
-      cfContext.ctx.waitUntil(saveHistoryToKV(kv, geminiUserId, newHistory));
+    if (storage.binding && cfContext?.ctx?.waitUntil) {
+      cfContext.ctx.waitUntil(persistHistory(storage, geminiUserId, newHistory));
+    } else if (storage.binding) {
+      await persistHistory(storage, geminiUserId, newHistory);
     }
 
     return text;

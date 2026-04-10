@@ -10,6 +10,8 @@ export async function GET(request) {
     timestamp: new Date().toISOString(),
     env: {
       hasWechatToken: !!process.env.WECHAT_TOKEN,
+      hasWechatAppId: !!process.env.WECHAT_APPID,
+      hasWechatSecret: !!process.env.WECHAT_SECRET,
       hasOpenAIKey: !!process.env.OPENAI_API_KEY,
       hasWechatOpenAIKey: !!process.env.WECHAT_OPENAI_API_KEY,
       hasGeminiKey: !!process.env.GEMINI_API_KEY,
@@ -21,7 +23,8 @@ export async function GET(request) {
       wechatOpenaiModel: process.env.WECHAT_OPENAI_MODEL || 'not set',
       geminiModel: process.env.GEMINI_MODEL_NAME || 'not set',
       wechatGeminiModel: process.env.WECHAT_GEMINI_MODEL_NAME || 'not set',
-      wechatReplyTimeoutMs: process.env.WECHAT_REPLY_TIMEOUT_MS || '4500',
+      wechatSyncReplyTimeoutMs: process.env.WECHAT_SYNC_REPLY_TIMEOUT_MS || '3500',
+      wechatAsyncAckMessage: process.env.WECHAT_ASYNC_ACK_MESSAGE || '已收到，正在生成回复，请稍候。',
       wechatUseKvHistory: process.env.WECHAT_USE_KV_HISTORY || 'false'
     }
   }), {
