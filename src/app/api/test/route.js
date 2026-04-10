@@ -1,10 +1,22 @@
 // src/app/api/test/route.js
 // 测试路由，用于验证 Cloudflare Pages Functions 是否正常工作
-const WECHAT_DEBUG_STATE_KEY = '__wechat_async_debug_state__';
+import { WECHAT_DEBUG_STATE_KEY } from '../../../lib/wechat-async.js';
 
 export async function GET(request) {
   const wechatEffectiveModel = process.env.WECHAT_GPT_MODEL || process.env.GPT_MODEL || 'openai';
   const wechatAsyncDebugState = globalThis[WECHAT_DEBUG_STATE_KEY]?.lastAsyncStatus || null;
+  let hasWechatReplyQueue = false;
+  let hasChatHistoryDb = false;
+
+  try {
+    const cfModule = await import('@opennextjs/cloudflare');
+    const cfContext = cfModule.getCloudflareContext ? await cfModule.getCloudflareContext() : null;
+    hasWechatReplyQueue = Boolean(cfContext?.env?.WECHAT_REPLY_QUEUE);
+    hasChatHistoryDb = Boolean(cfContext?.env?.CHAT_HISTORY_DB);
+  } catch {
+    hasWechatReplyQueue = false;
+    hasChatHistoryDb = false;
+  }
 
   return new Response(JSON.stringify({
     status: 'ok',
@@ -15,6 +27,8 @@ export async function GET(request) {
       hasWechatToken: !!process.env.WECHAT_TOKEN,
       hasWechatAppId: !!process.env.WECHAT_APPID,
       hasWechatSecret: !!process.env.WECHAT_SECRET,
+      hasWechatReplyQueue,
+      hasChatHistoryDb,
       hasOpenAIKey: !!process.env.OPENAI_API_KEY,
       hasWechatOpenAIKey: !!process.env.WECHAT_OPENAI_API_KEY,
       hasGeminiKey: !!process.env.GEMINI_API_KEY,

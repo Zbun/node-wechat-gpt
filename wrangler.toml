@@ -1,5 +1,5 @@
 name = "node-wechat-gpt"
-main = ".open-next/worker.js"
+main = "worker.mjs"
 compatibility_date = "2026-04-09"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 keep_vars = true      # 保持环境变量，重新部署不清除
@@ -25,3 +25,10 @@ service = "node-wechat-gpt"
 # [[kv_namespaces]]
 # binding = "CHAT_HISTORY"
 # id = "你的实际 KV namespace ID"
+#
+# [[queues.producers]]
+# binding = "WECHAT_REPLY_QUEUE"
+# queue = "wechat-reply-queue"
+#
+# [[queues.consumers]]
+# queue = "wechat-reply-queue"
