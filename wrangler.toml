@@ -1,31 +1,16 @@
 name = "node-wechat-gpt"
-main = ".open-next/worker.js"
+main = "worker.mjs"
 compatibility_date = "2026-04-09"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
-keep_vars = true      # 保持环境变量，重新部署不清除
+keep_vars = true
 
-# 静态资源配置
-[assets]
-directory = ".open-next/assets"
-binding = "ASSETS"
-
-# Worker 自引用（路由需要）
-[[services]]
-binding = "WORKER_SELF_REFERENCE"
-service = "node-wechat-gpt"
-
-# D1 / KV 可选，不在仓库里写死真实 ID，避免覆盖用户线上配置或因占位符导致部署失败。
-# 当前代码优先使用 D1 绑定 CHAT_HISTORY_DB，未绑定时才回退到 KV 绑定 CHAT_HISTORY。
-# 如需通过 wrangler.toml 管理，再手动添加：
+# 可选：使用 D1 保存对话历史
 # [[d1_databases]]
 # binding = "CHAT_HISTORY_DB"
 # database_name = "wechat-gpt-history"
 # database_id = "你的实际 D1 database_id"
-#
+
+# 可选：使用 KV 作为历史记录回退存储
 # [[kv_namespaces]]
 # binding = "CHAT_HISTORY"
 # id = "你的实际 KV namespace ID"
-#
-# [[queues.producers]]
-# binding = "WECHAT_REPLY_QUEUE"
-# queue = "wechat-reply-queue"
